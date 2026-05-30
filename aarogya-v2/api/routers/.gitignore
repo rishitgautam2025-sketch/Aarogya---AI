@@ -1,0 +1,15 @@
+# Sensitive data (KEEP THIS SECRET!)
+.env
+
+# Python junk (Temporary files Python creates)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editor files (VS Code settings)
+.vscode/
+.idea/
+
+# Database (If you have a local SQLite file, don't upload your user data!)
+*.db
