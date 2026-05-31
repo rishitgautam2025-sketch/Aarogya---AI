@@ -96,6 +96,7 @@ const PeaceTimeDashboard = ({ elderName, dailyLogs, onExport }) => (
 /* ------------------------------------------------------------------ */
 export default function App() {
   const [isEmergency, setIsEmergency] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
   const [showRawData, setShowRawData] = useState(false);
   const [dailyLogs, setDailyLogs] = useState([]);
   const [elderName, setElderName] = useState("Loading...");
@@ -148,12 +149,12 @@ export default function App() {
         </button>
       </header>
       
-      {isEmergency ? (
+      {isEmergency && !isDismissed ? (
         <EmergencyAlert 
           onCall={() => alert("Calling...")} 
           onToggleDetails={() => setShowRawData(!showRawData)} 
           showDetails={showRawData} 
-          onDismiss={() => setIsEmergency(false)} 
+          onDismiss={() => setIsDismissed(true)} // 👈 3. Change this to set your new state
         />
       ) : (
         <PeaceTimeDashboard 
