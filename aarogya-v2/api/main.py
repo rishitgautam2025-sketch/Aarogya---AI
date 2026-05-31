@@ -648,14 +648,21 @@ def feedback(req: FeedbackRequest):
 
     return {"status": "recorded", "message": "Thank you. Your feedback improves future predictions."}
 
-@app.get("/setup-db")
-def force_setup_db():
-    # Explicitly import the models so SQLAlchemy wakes up and sees them!
-    from api.models import User, Elder, HealthLog
-    from api.database import Base, engine
+@app.get("/get-sql")
+def generate_sql():
+    from fastapi.responses import PlainTextResponse
+    from sqlalchemy.schema import CreateTable
+    from sqlalchemy.dialects import postgresql
+    from api import models
     
-    try:
-        Base.metadata.create_all(bind=engine)
-        return {"status": "success", "message": "Supabase tables forcefully built!"}
-    except Exception as e:
-        return {"status": "error", "error_details": str(e)}
+    sql = "-- SQLAlchemy Models --\n\n"
+    # This automatically writes the SQL for all your Python models
+    for table in models.Base.metadata.sorted_tables:
+        sql += str(CreateTable(table).compile(dialect=postgresql.dialect())).strip() + ";\n\n"
+        
+    # We also need to build the tables for your raw Supabase AI webhooks!
+    sql += "-- Raw Supabase Tables --\n\n"
+    sql += "CREATE TABLE IF NOT EXISTS voice_logs (\n  id SERIAL PRIMARY KEY,\n  patient_id VARCHAR,\n  raw_text TEXT,\n  processed BOOLEAN,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n"
+    sql += "CREATE TABLE IF NOT EXISTS symptom_tags (\n  id SERIAL PRIMARY KEY,\n  log_id INTEGER,\n  patient_id VARCHAR,\n  tag_type VARCHAR,\n  label VARCHAR,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n"
+    
+    return PlainTextResponse(content=sql)
