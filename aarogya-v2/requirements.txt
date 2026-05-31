@@ -10,3 +10,10 @@ openai
 groq
 twilio
 psycopg2-binary
+python-jose
+passlib
+bcrypt
+email-validator
+python-multipart
+sqlalchemy
+google-generativeai
