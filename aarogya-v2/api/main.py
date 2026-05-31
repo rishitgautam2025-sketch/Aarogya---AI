@@ -70,6 +70,7 @@ else:
 # ─────────────────────────────────────────────
 # APP SETUP & MIDDLEWARE (Cleaned & Unified)
 # ─────────────────────────────────────────────
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Aarogya AI V2",
@@ -646,3 +647,15 @@ def feedback(req: FeedbackRequest):
         f.write(json.dumps(entry) + "\n")
 
     return {"status": "recorded", "message": "Thank you. Your feedback improves future predictions."}
+
+@app.get("/setup-db")
+def force_setup_db():
+    # Explicitly import the models so SQLAlchemy wakes up and sees them!
+    from api.models import User, Elder, HealthLog
+    from api.database import Base, engine
+    
+    try:
+        Base.metadata.create_all(bind=engine)
+        return {"status": "success", "message": "Supabase tables forcefully built!"}
+    except Exception as e:
+        return {"status": "error", "error_details": str(e)}
