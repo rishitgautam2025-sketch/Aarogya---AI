@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = 'http://127.0.0.1:8000';
+// This will use Vercel's URL in production, and localhost on your computer!
+export const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export const api = {
   // Auth

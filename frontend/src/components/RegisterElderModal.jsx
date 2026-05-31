@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import PhoneInput from 'react-phone-number-input';
 import 'react-phone-number-input/style.css'; // Don't forget the CSS!
+import { API_URL } from '../api';
 
 const RegisterElderModal = ({ onClose }) => {
   const [name, setName] = useState("");
@@ -19,7 +20,7 @@ const RegisterElderModal = ({ onClose }) => {
     
     try {
       // 1. Send the data to FastAPI
-      const response = await fetch("http://localhost:8000/api/elders", {
+      const response = await fetch(`${API_URL}/api/elders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -82,9 +82,14 @@ os.makedirs("media", exist_ok=True)
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
 # 3. Add CORS Middleware so React can access the API and the media files
+# ✅ SECURED CORS CONFIGURATION
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=[
+        "https://aarogya-ai-navy.vercel.app",   # Your live Vercel frontend
+        "http://localhost:5173",                # Local React development
+        "http://127.0.0.1:5173",                # Local React development (alt)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
