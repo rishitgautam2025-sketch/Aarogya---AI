@@ -54,7 +54,7 @@ const RegisterElderModal = ({ onClose }) => {
           <input 
             type="text" 
             placeholder="Elder's Name (e.g., Prachi)" 
-            className="w-full p-2 mb-4 border rounded"
+            className="w-full p-2 mb-4 border rounded text-slate-900 placeholder-slate-400"
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
@@ -67,7 +67,7 @@ const RegisterElderModal = ({ onClose }) => {
               defaultCountry="IN"
               value={phone}
               onChange={setPhone}
-              className="w-full p-2 border rounded" // Tailwind styles work here too
+              className="w-full p-2 border rounded text-slate-900 placeholder-slate-400" // Tailwind styles work here too
             />
           </div>
 

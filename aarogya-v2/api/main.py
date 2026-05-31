@@ -23,6 +23,8 @@ import uuid
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
+from .database import engine
+from . import models
 
 import joblib
 import numpy as np
