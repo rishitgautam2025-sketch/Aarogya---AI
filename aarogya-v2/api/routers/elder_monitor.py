@@ -1,29 +1,32 @@
 """
-Elder Monitor Router — SECURED with JWT auth + anomaly detection.
+Elder Monitor Router — SECURED with JWT auth + anomaly detection + Supabase Storage.
 """
 
-import openai
-import google.generativeai as genai
+import os
+import io
 import json
-import os
-
-# API Configurations
-openai.api_key = os.getenv("OPENAI_API_KEY")
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-import os
+import httpx
 import requests
-import json
+from datetime import datetime, timedelta
+from typing import Optional, List
+
 import openai
 import google.generativeai as genai
-from dotenv import load_dotenv
-from fastapi import APIRouter, Request, Depends, Form
-from sqlalchemy.orm import Session
-from api.database import get_db
-from api.models import HealthLog, Elder
-from datetime import datetime, date
 from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse
 from requests.auth import HTTPBasicAuth
+from dotenv import load_dotenv
+
+from fastapi import APIRouter, Request, Depends, Form, HTTPException, Response
+from sqlalchemy.orm import Session
+from sqlalchemy import desc
+from pydantic import BaseModel
+
+from api.database import get_db
+from api.models import Elder, User, HealthLog, Alert
+from api.auth import get_current_active_user, get_current_user
+from api.routers.whatsapp import send_whatsapp
+from api.storage import upload_audio
 
 load_dotenv()
 
@@ -31,112 +34,12 @@ load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
-
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
-client = Client(TWILIO_SID, TWILIO_TOKEN)
-
-DISCLAIMER = "\n\n(Note: This is a summary of your daily symptom log for your personal records. It is not medical advice.)"
-
-# --- THE AI BRAIN ---
-async def transcribe_and_analyze(audio_path):
-    # Transcribe with Whisper
-    with open(audio_path, "rb") as audio_file:
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
-    text = transcript["text"]
-
-    # Analyze with Gemini
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    prompt = f"Extract symptoms from this text: '{text}'. Return a short summary."
-    response = model.generate_content(prompt)
-    return text, response.text
-
-@router.post("/incoming")
-async def incoming(request: Request, db: Session = Depends(get_db)):
-    form = await request.form()
-    from_num = form.get("From", "").replace("whatsapp:", "")
-    body = form.get("Body", "").strip()
-    media_url = form.get("MediaUrl0")
-    media_sid = form.get("MediaSid0")
-    
-    # 1. GATEKEEPER
-    if not body and not media_url:
-        return {"status": "ignored"}
-
-    # 2. AUDIO HANDLING
-    text = body.lower()
-    if media_url and "audio" in form.get("MediaContentType0", ""):
-        # Download
-        audio_path = "temp_note.ogg"
-        r = requests.get(media_url, auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN))
-        with open(audio_path, "wb") as f: f.write(r.content)
-        
-        # Transcribe
-        text, ai_summary = await transcribe_and_analyze(audio_path)
-        body = f"Voice note: {text}. Analysis: {ai_summary}"
-        
-        # Cleanup
-        if os.path.exists(audio_path): os.remove(audio_path)
-        client.api.v2010.account(TWILIO_SID).media(media_sid).delete()
-
-    # 3. SAFETY SHIELD
-    emergency_keywords = ["chest pain", "saans", "breathless", "bleeding", "emergency"]
-    if any(word in text for word in emergency_keywords):
-        return {"reply": "🚨 EMERGENCY ALERT: Please call for help."}
-
-    # 4. SAVE & REPLY (Your existing logic here...)
-    # [Insert your DB save logic from before]
-    
-    return {"status": "saved"}
-async def transcribe_and_analyze(audio_file_path):
-    # 1. Transcribe with Whisper
-    with open(audio_file_path, "rb") as audio_file:
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
-        text = transcript["text"]
-    
-    print(f"📝 Transcription: {text}")
-
-    # 2. Analyze with Gemini
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    prompt = f"""
-    Extract clinical vitals from this text: "{text}"
-    Return ONLY valid JSON with keys: 'temperature', 'heart_rate', 'systolic_bp', 'diastolic_bp'.
-    If a value is missing, use null.
-    """
-    response = model.generate_content(prompt)
-    
-    # Clean the output to ensure it is valid JSON
-    clean_json = response.text.replace('```json', '').replace('```', '').strip()
-    vitals_json = json.loads(clean_json)
-    
-    print(f"🧠 AI Extracted Vitals: {vitals_json}")
-    return text, vitals_json
-from api.auth import get_current_user
-from api.routers.whatsapp import send_whatsapp
-from fastapi import APIRouter, Depends, HTTPException, Request, Form, Response
-from twilio.twiml.messaging_response import MessagingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime, timedelta
-import httpx
-
-from api.database import get_db
-from api.models import Elder, User, HealthLog, Alert
-from api.auth import get_current_active_user
-
-router = APIRouter(prefix="/elder-monitor", tags=["Elder Monitor"])
-def test_fetch_elders(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    return db.query(Elder).filter(Elder.caregiver_id == current_user.id).all()
-
 GEOAPIFY_KEY = os.getenv("GEOAPIFY_KEY", "c7c39837c677431cb5568b46a9e4f6a7")
 
+router = APIRouter(prefix="/elder-monitor", tags=["Elder Monitor"])
 
 # ── Pydantic schemas ──────────────────────────────────────────────
 
@@ -144,33 +47,24 @@ class ElderCreate(BaseModel):
     name: str
     age: int
     city: str
-    phone: Optional[str] = None  # <--- ADD THIS EXACT LINE!
+    phone: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     known_conditions: Optional[List[str]] = []
     medications: Optional[List[str]] = []
     emergency_contact: Optional[str] = None
 
-from typing import List, Optional
-from pydantic import BaseModel
-
 class HealthLogCreate(BaseModel):
     elder_id: int
-    
-    # Qualitative check-in
     feeling_today: Optional[str] = None
     appetite: Optional[str] = None
     mobility: Optional[str] = None
     had_fall: Optional[bool] = False
     new_pain: Optional[bool] = False
     new_pain_location: Optional[str] = None
-    
-    # Clinical vitals (Optional)
     temperature: Optional[float] = None
     blood_pressure_systolic: Optional[float] = None
     blood_pressure_diastolic: Optional[float] = None
-    
-    # Symptoms
     symptoms: Optional[List[str]] = []
     symptom_severity: Optional[str] = "mild"
     notes: Optional[str] = None
@@ -191,38 +85,29 @@ def get_elder_or_404(elder_id: int, user: User, db: Session):
 # ── Anomaly detection ─────────────────────────────────────────────
 
 def detect_anomaly(log: HealthLogCreate) -> tuple[bool, str, str]:
-    """
-    Returns: (is_anomaly, severity, message)
-    """
+    """Returns: (is_anomaly, severity, message)"""
     warnings = []
     severity = "YELLOW"
 
-    # 1. Qualitative Red Flags (Critical for rural triage)
     if log.had_fall:
         warnings.append("Patient experienced a fall today.")
         severity = "RED"
-        
     if log.mobility == "Cannot Get Up":
         warnings.append("Patient is unable to get up out of bed/chair.")
         severity = "RED"
-        
     if log.feeling_today == "Very Poor" and log.appetite == "Not Eating":
         warnings.append("Patient reports feeling very poor with complete loss of appetite.")
         severity = "RED"
-
     if log.new_pain:
         loc = f" in {log.new_pain_location}" if log.new_pain_location else ""
         warnings.append(f"Reported new onset of pain{loc}.")
-
-    # 2. Clinical Vitals (If provided by ASHA worker)
     if log.temperature:
-        if log.temperature > 38.5:  # ~101.3 F
+        if log.temperature > 38.5:
             warnings.append(f"High fever detected ({log.temperature}°C).")
             severity = "RED" if log.temperature > 39.5 else "YELLOW"
         elif log.temperature < 35.0:
             warnings.append(f"Hypothermia risk ({log.temperature}°C).")
             severity = "RED"
-
     if log.blood_pressure_systolic and log.blood_pressure_diastolic:
         if log.blood_pressure_systolic > 180 or log.blood_pressure_diastolic > 120:
             warnings.append(f"Hypertensive crisis ({log.blood_pressure_systolic}/{log.blood_pressure_diastolic}).")
@@ -244,9 +129,7 @@ def get_my_elders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    # Fetch all patients belonging to the logged-in caregiver
-    elders = db.query(Elder).filter(Elder.caregiver_id == current_user.id).all()
-    return elders
+    return db.query(Elder).filter(Elder.caregiver_id == current_user.id).all()
 
 @router.post("/register")
 def register_elder(
@@ -260,18 +143,14 @@ def register_elder(
     db.refresh(elder)
     return {"status": "registered", "elder_id": elder.id, "name": elder.name}
 
-
 @router.post("/log")
 def log_health(payload: HealthLogCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. Verify the patient belongs to the current user
     elder = db.query(Elder).filter(Elder.id == payload.elder_id).first()
     if not elder:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    # 2. Run the AI anomaly detection
     is_anomaly, severity, message = detect_anomaly(payload)
 
-    # 3. Save the new qualitative data to the database
     new_log = HealthLog(
         elder_id=payload.elder_id,
         feeling_today=payload.feeling_today,
@@ -294,41 +173,31 @@ def log_health(payload: HealthLogCreate, db: Session = Depends(get_db), current_
     db.commit()
     db.refresh(new_log)
     
-# --- THE WHATSAPP TRIGGER & CLARIFICATION LOOP ---
     if elder and elder.phone:
-        # Safely get the risk level
         risk = getattr(new_log, 'risk_level', 'normal').lower()
 
-        # 1. Check for Moderate / Clarification FIRST (Intercepts the anomaly flag)
         if risk in ["moderate", "medium", "borderline", "elevated", "yellow"]:
             alert_message = f"🟡 Aarogya AI Notice: Vitals for {elder.name} are slightly abnormal (Temp: {new_log.temperature}°C). Can you please double-check their vitals and log them again to be safe?"
             try:
                 send_whatsapp(to=elder.phone, message=alert_message)
-                print("Clarification request sent.")
             except Exception as e:
                 print(f"Failed to trigger WhatsApp: {e}")
         
-        # 2. High Risk Alert (The Emergency)
         elif risk == "high" or is_anomaly:
             alert_message = f"🚨 Aarogya AI Alert: HIGH RISK detected for {elder.name}. Issue: {new_log.ai_recommendation}"
             try:
                 send_whatsapp(to=elder.phone, message=alert_message)
-                print("High risk alert sent.")
             except Exception as e:
                 print(f"Failed to trigger WhatsApp: {e}")
-        # ---------------------------------------
-
         
     alert_data = None
     if is_anomaly:
-        from api.models import Alert 
         new_alert = Alert(
             elder_id=payload.elder_id,
-            alert_type="MEDICAL_ANOMALY",  # <--- Add this missing line!
+            alert_type="MEDICAL_ANOMALY", 
             severity=severity,
             message=message
         )
-        
         db.add(new_alert)
         db.commit()
         db.refresh(new_alert)
@@ -340,7 +209,6 @@ def log_health(payload: HealthLogCreate, db: Session = Depends(get_db), current_
         "alert_triggered": is_anomaly,
         "alert": alert_data
     }
-
 
 @router.get("/history/{elder_id}")
 def get_history(
@@ -358,7 +226,6 @@ def get_history(
         .all()
     )
     return {"elder_id": elder_id, "days": days, "total_logs": len(logs), "logs": logs}
-
 
 @router.get("/alerts/{elder_id}")
 def get_alerts(
@@ -385,7 +252,6 @@ def resolve_alert(
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     
-    # Verify the user actually owns the elder attached to this alert
     get_elder_or_404(alert.elder_id, current_user, db)
 
     alert.is_resolved = True
@@ -393,7 +259,6 @@ def resolve_alert(
     alert.action_taken = action_taken
     db.commit()
     return {"status": "resolved", "alert_id": alert_id}
-
 
 @router.get("/nearby-clinics/{elder_id}")
 async def nearby_clinics(
@@ -425,95 +290,108 @@ async def nearby_clinics(
         })
     return {"elder_id": elder_id, "clinics": clinics}
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from api.database import get_db
-from api.models import Elder
-from pydantic import BaseModel
 
-class ElderRegister(BaseModel):
-    name: str
-    age: int
-    city: str
-    phone: str = None
+# ── THE NEW WHATSAPP WEBHOOK ──────────────────────────────────────
 
-@router.post("/register", response_model=dict)
-def register_elder(data: ElderRegister, db: Session = Depends(get_db)):
-    # Check if phone already exists
-    existing = db.query(Elder).filter(Elder.phone == data.phone).first()
-    if existing:
-        return {"status": "exists", "elder_id": existing.id}
-    
-    elder = Elder(
-        caregiver_id=1,  # Default for testing
-        name=data.name,
-        age=data.age,
-        city=data.city,
-        phone=data.phone
-    )
-    db.add(elder)
-    db.commit()
-    db.refresh(elder)
-    return {"status": "registered", "elder_id": elder.id}
-
-from fastapi import Request, Form
-
-# ... your existing routes ...
-
-# 1. THE ROUTE HANDLER (The "Receiver")
 @router.post("/whatsapp-webhook")
 async def whatsapp_webhook(
+    db: Session = Depends(get_db),
     From: str = Form(...),
     Body: str = Form(None),
     MediaUrl0: str = Form(None),
-    MediaContentType0: str = Form(None)
+    MediaContentType0: str = Form(None),
+    MediaSid0: str = Form(None),
 ):
-    # This part handles the incoming Twilio data
-    message_text = Body or "No text provided"
-    
-    # CALL YOUR LOGIC HERE
-    final_response = await get_ai_response(message_text)
-    
-    # Send the response back to Twilio
-    response = MessagingResponse()
-    response.message(final_response)
-    return Response(content=str(response), media_type="application/xml")
+    from_num = From.replace("whatsapp:", "").strip()
+    message_text = Body or ""
+    audio_public_url = None
 
-# 2. THE LOGIC CHECKER (The "Processor" - keep this separate)
-async def get_ai_response(text):
-    # The Red Flag Shield
-    emergency_keywords = ["chest pain", "breathing", "bleeding", "confusion", "unconscious", "cannot breathe"]
-    
-    if any(word in text.lower() for word in emergency_keywords):
-        return "🚨 EMERGENCY ALERT: I detected keywords that may indicate a serious medical situation. Please stop using this app and call emergency services or your doctor immediately."
+    # ── 1. AUDIO HANDLING ──
+    if MediaUrl0 and MediaContentType0 and "audio" in MediaContentType0:
 
-    # Proceed to AI analysis (You can add your Gemini call here later)
-    # ai_result = analyze_with_gemini(text) 
-    
-    # The Disclaimer
-    disclaimer = "\n\n(Note: This is a summary of your daily symptom log for your personal records. It is not medical advice. Do not make medical decisions based on this summary.)"
-    
-    return f"I have logged your update: '{text}' {disclaimer}"
-    """Catches incoming WhatsApp messages and voice notes from Twilio"""
-    
-    print(f"Message received from: {From}")
-    
-    # Check if the user sent an audio file (voice note)
-    if MediaUrl0 and "audio" in MediaContentType0:
-        print(f"🎤 Voice note received! Audio URL: {MediaUrl0}")
-        # Next steps: Download the audio, send to AI, update database
-        reply_text = "Aarogya AI is analyzing your voice note..."
-        
-    # If they just typed a regular text message
-    elif Body:
-        print(f"💬 Text received: {Body}")
-        reply_text = f"I received your message: {Body}. (Voice notes are preferred!)"
-        
+        # Download from Twilio
+        r = requests.get(
+            MediaUrl0,
+            auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN)
+        )
+        audio_bytes = r.content
+
+        # Upload to Supabase Storage
+        audio_public_url = upload_audio(audio_bytes)
+
+        # Transcribe with Whisper — pure memory
+        audio_buffer = io.BytesIO(audio_bytes)
+        audio_buffer.name = "voice_note.ogg"
+
+        openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_buffer,
+        )
+        message_text = transcript.text
+
+        if MediaSid0:
+            try:
+                Client(TWILIO_SID, TWILIO_TOKEN)\
+                    .api.v2010.account(TWILIO_SID)\
+                    .media(MediaSid0).delete()
+            except Exception as e:
+                print(f"[WARN] Could not delete Twilio media: {e}")
+
+    # ── 2. EMERGENCY SHIELD ──
+    emergency_keywords = [
+        "chest pain", "saans", "breathless",
+        "bleeding", "emergency", "cannot breathe", "unconscious"
+    ]
+    if any(word in message_text.lower() for word in emergency_keywords):
+        twiml = MessagingResponse()
+        twiml.message(
+            "🚨 EMERGENCY ALERT: Serious symptoms detected. "
+            "Please call emergency services or go to your nearest hospital immediately."
+        )
+        return Response(content=str(twiml), media_type="application/xml")
+
+    # ── 3. AI ANALYSIS ──
+    ai_summary = "No message content to analyze."
+    if message_text:
+        try:
+            gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+            prompt = (
+                f"A patient sent this health update: '{message_text}'. "
+                "Extract any symptoms mentioned and provide a brief 1-2 sentence "
+                "clinical summary. Be concise and factual."
+            )
+            ai_summary = gemini_model.generate_content(prompt).text
+        except Exception as e:
+            print(f"[WARN] Gemini analysis failed: {e}")
+            ai_summary = "AI analysis unavailable. Log saved."
+
+    # ── 4. SAVE TO DATABASE ──
+    elder = db.query(Elder).filter(Elder.phone == from_num).first()
+
+    if elder:
+        new_log = HealthLog(
+            elder_id=elder.id,
+            notes=message_text,
+            ai_recommendation=ai_summary,
+            audio_url=audio_public_url,
+            risk_level="GREEN",
+            logged_at=datetime.utcnow(),
+        )
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        print(f"[INFO] Log saved for elder {elder.name}, log_id={new_log.id}")
     else:
-        reply_text = "I didn't understand that format. Please send a voice note."
+        print(f"[WARN] No elder found with phone={from_num}. Log not saved.")
 
-    # Twilio requires an XML response to know the message was received
-    response = MessagingResponse()
-    response.message(reply_text)
-    
-    return Response(content=str(response), media_type="application/xml")
+    # ── 5. REPLY TO WHATSAPP ──
+    disclaimer = (
+        "\n\n(Note: This is a summary of your symptom log. "
+        "It is not medical advice.)"
+    )
+    reply = f"✅ Aarogya AI received your update:\n{ai_summary}{disclaimer}"
+
+    twiml = MessagingResponse()
+    twiml.message(reply)
+    return Response(content=str(twiml), media_type="application/xml")
