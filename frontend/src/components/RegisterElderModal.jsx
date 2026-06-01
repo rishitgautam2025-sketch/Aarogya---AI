@@ -29,7 +29,8 @@ const RegisterElderModal = ({ onClose }) => {
       });
 
       if (response.ok) {
-        console.log("Success! Elder saved to database.");
+        // 👈 1. Show a visible success alert before reloading!
+        alert(`Success! ${name} has been registered.`);
         
         // 2. Close the modal
         if (onClose) onClose();
@@ -37,10 +38,16 @@ const RegisterElderModal = ({ onClose }) => {
         // 3. Refresh the page so the 404 disappears and the dashboard loads!
         window.location.reload(); 
       } else {
-        console.error("Backend rejected the registration.");
+        // 👈 2. Read the custom crash message packaged by your backend exception handler
+        const errorData = await response.json().catch(() => ({}));
+        const serverError = errorData.CRASH_MESSAGE || "Database unique constraint failure (Phone number already registered).";
+        
+        alert(`Registration Failed: ${serverError}`);
       }
     } catch (error) {
       console.error("Failed to connect to backend:", error);
+      // 👈 3. Show a visible alert if the frontend can't even touch Render
+      alert("Network Error: Could not reach the server. Make sure Render is awake!");
     }
   };
 
