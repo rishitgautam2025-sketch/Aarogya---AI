@@ -44,7 +44,7 @@ DISCLAIMER = "\n\n(Note: This is a summary of your daily symptom log for your pe
 # ─────────────────────────────────────────────
 def send_whatsapp(to: str, message: str):
     url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
-    from_num = TWILIO_NUMBER if "whatsapp:" in TWILIO_NUMBER else f"whatsapp:{TWILIO_NUMBER}"
+    from_num = "whatsapp:+14155238886"  # <-- Use YOUR actual Twilio sandbox number here!
     to_num = to if "whatsapp:" in to else f"whatsapp:{to}"
     
     payload = {"From": from_num, "To": to_num, "Body": message}
