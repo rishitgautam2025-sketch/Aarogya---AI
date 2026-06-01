@@ -20,7 +20,7 @@ const RegisterElderModal = ({ onClose }) => {
     
     try {
       // 1. Send the data to FastAPI
-      const response = await fetch(`${API_URL}/api/elders`, {
+      const response = await fetch("https://aarogya-ai-vm0r.onrender.com/api/elders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
