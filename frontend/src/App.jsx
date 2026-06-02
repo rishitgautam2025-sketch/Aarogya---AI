@@ -16,8 +16,14 @@ import {
 /* ------------------------------------------------------------------ */
 //  1. DATA PROCESSING
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+//  1. DATA PROCESSING
+/* ------------------------------------------------------------------ */
 const computeDailySummaries = (logs) => {
-  return logs.map(log => {
+  // Sort from newest to oldest (Reverse Chronological)
+  const sortedLogs = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  return sortedLogs.map(log => {
     // Safely parse the SQLite stringified array
     let parsedSymptoms = [];
     if (Array.isArray(log.symptoms)) {
@@ -42,7 +48,7 @@ const computeDailySummaries = (logs) => {
     return {
       date: log.date,
       totalVoiceNotes: 1, 
-      symptoms: safeTags, // This is now an array of formatted objects!
+      symptoms: safeTags,
       sentiment: log.sentiment
     };
   });
@@ -82,12 +88,14 @@ const PeaceTimeDashboard = ({ elderName, dailyLogs, onExport }) => (
         <div className="lg:col-span-2 space-y-6">
             <h3 className="text-lg font-bold text-white flex items-center gap-2"><FileText className="w-5 h-5 text-cyan-400" /> Symptom History</h3>
             {dailyLogs.length === 0 ? (
-                <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-slate-400 text-center">
-                   No symptom logs yet. Waiting for WhatsApp updates...
+                /* The Gentle Nudge (Replaces the empty gray box) */
+                <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-8 text-center space-y-3">
+                    <p className="text-slate-300 font-medium text-lg">No recent updates.</p>
+                    <p className="text-slate-500 text-sm">They haven't responded recently. It might be a good time to send a quick check-in message!</p>
                 </div>
             ) : (
                 dailyLogs.map((log, index) => (
-                    <div key={index} className="bg-white/[0.03] border border-white/10 rounded-2xl p-6">
+                    <div key={index} className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 flex flex-col">
                         <span className="text-sm font-bold text-slate-300">{log.date}</span>
                         
                         {/* AI Symptom Badges */}
@@ -102,7 +110,10 @@ const PeaceTimeDashboard = ({ elderName, dailyLogs, onExport }) => (
                               </span>
                             ))
                           ) : (
-                            <span className="text-sm italic text-gray-500">No critical symptoms extracted</span>
+                            /* The "All Clear" Badge */
+                            <span className="px-3 py-1 text-xs font-semibold text-emerald-200 bg-emerald-900/50 border border-emerald-700 rounded-full flex items-center gap-1 w-fit">
+                              <ShieldCheck className="w-3 h-3" /> All Clear
+                            </span>
                           )}
                         </div>
 
