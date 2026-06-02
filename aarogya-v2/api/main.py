@@ -20,6 +20,7 @@ import json
 import os
 import traceback
 import uuid
+import io
 import openai
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, date
@@ -194,44 +195,44 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
     if not elder:
         return {"reply": "Namaste! Aapka number register nahi hai. Apne bachche se contact karein."}
 
-    # --- 1. DOWNLOAD AUDIO & TRANSCRIBE (WITH WHISPER) ---
+    # --- 1. DOWNLOAD AUDIO & TRANSCRIBE (IN-MEMORY) ---
     local_audio_path = None
-    text_to_process = body.lower() # Defaults to typed text if no audio
+    text_to_process = body.lower() 
 
     if media_url_0:
-        print("🎙️ Voice note detected! Downloading...")
-        # Use Twilio Auth to securely download the file (from your older code)
+        print(f"🎙️ Voice note detected! Downloading from Twilio...")
+        
+        # Download from Twilio using your original working Auth
         audio_response = requests.get(
             media_url_0,
-            auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN)
+            auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
         )
-        if audio_response.status_code == 200:
-            filename = f"{uuid.uuid4()}.ogg"
-            filepath = os.path.join("media", filename)
-            with open(filepath, "wb") as f:
-                f.write(audio_response.content)
-            local_audio_path = f"media/{filename}"
-            
-            print("🧠 Translating audio to English via Whisper...")
+        
+        if audio_response.status_code in [200, 201]:
+            print("✅ Audio downloaded successfully. Sending to Whisper...")
             try:
+                # Keep audio purely in RAM (No saving to disk!)
+                audio_buffer = io.BytesIO(audio_response.content)
+                audio_buffer.name = "voice_note.ogg" # Whisper needs to know the format
+                
                 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                with open(filepath, "rb") as audio_file:
-                    # 'translations' automatically detects language and returns English!
-                    transcript = openai_client.audio.translations.create(
-                        model="whisper-1",
-                        file=audio_file
-                    )
+                
+                # Translate any language to English
+                transcript = openai_client.audio.translations.create(
+                    model="whisper-1",
+                    file=audio_buffer
+                )
                 text_to_process = transcript.text
                 print(f"✅ Translated Text: {text_to_process}")
+                
             except Exception as e:
-                print(f"[ERROR] Whisper Translation Failed: {e}")
-                text_to_process = "Voice note translation failed."
+                print(f"❌ [ERROR] Whisper Translation Failed: {e}")
+                text_to_process = "" # Fallback so the server doesn't crash
+        else:
+            print(f"❌ [ERROR] Twilio Audio Download Failed. Status: {audio_response.status_code}")
 
     # --- 2. PARSE MOOD & SYMPTOMS (GEMINI UPGRADE) ---
-    # Hand the Translated text to Gemini to pull the warning tags
     extracted_tags = extract_symptoms_for_whatsapp(text_to_process)
-    
-    # Extract just the labels to save into your database
     symptoms = [tag['label'] for tag in extracted_tags] if extracted_tags else []
     
     mood = 3 # Default Neutral
@@ -249,8 +250,8 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
         mood=mood,
         symptoms=symptoms,
         notes=body if body else "Voice Note", 
-        transcript=text_to_process,  # Save the English Whisper translation here!
-        audio_url=local_audio_path, 
+        transcript=text_to_process,  
+        audio_url=None, # We didn't save it locally, so this is None
         source="whatsapp",
         log_date=date.today(),
         is_daily_summary=False,
