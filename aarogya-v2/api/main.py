@@ -118,7 +118,7 @@ Base.metadata.create_all(bind=engine)
 # Include routers
 app.include_router(auth_router)
 app.include_router(elder_monitor_router)
-app.include_router(whatsapp.router)
+#app.include_router(whatsapp.router)
 
 
 # ─────────────────────────────────────────────
