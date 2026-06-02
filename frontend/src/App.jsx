@@ -16,15 +16,19 @@ import {
 /* ------------------------------------------------------------------ */
 //  1. DATA PROCESSING
 /* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-//  1. DATA PROCESSING
-/* ------------------------------------------------------------------ */
 const computeDailySummaries = (logs) => {
-  // Sort from newest to oldest (Reverse Chronological)
-  const sortedLogs = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  // 1. Group all logs by their date
+  const groupedByDate = {};
 
-  return sortedLogs.map(log => {
-    // Safely parse the SQLite stringified array
+  logs.forEach(log => {
+    const date = log.date;
+    
+    // If we haven't seen this date yet, create a fresh bucket for it
+    if (!groupedByDate[date]) {
+      groupedByDate[date] = { date: date, allSymptoms: [] };
+    }
+
+    // Safely parse this specific log's symptoms
     let parsedSymptoms = [];
     if (Array.isArray(log.symptoms)) {
         parsedSymptoms = log.symptoms;
@@ -32,13 +36,23 @@ const computeDailySummaries = (logs) => {
         try {
             parsedSymptoms = JSON.parse(log.symptoms.replace(/'/g, '"'));
         } catch (e) {
-            parsedSymptoms = [log.symptoms];
+            if (log.symptoms.trim() !== "") {
+                parsedSymptoms = [log.symptoms];
+            }
         }
     }
 
+    // Throw these symptoms into the daily bucket
+    groupedByDate[date].allSymptoms.push(...parsedSymptoms);
+  });
+
+  // 2. Process the grouped buckets into the final cards
+  const dailySummaries = Object.values(groupedByDate).map(day => {
     const counts = {};
-    parsedSymptoms.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+    // Count how many times each symptom was reported TODAY
+    day.allSymptoms.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
     
+    // Generate the AI warning badges
     const safeTags = Object.entries(counts).map(([symptom, count]) => {
       if (symptom.toLowerCase().includes("chest pain") && count > 1) return { type: "WORSENING", label: `${symptom}` };
       if (count > 1) return { type: "REPEATED", label: `${symptom} (x${count})` };
@@ -46,12 +60,15 @@ const computeDailySummaries = (logs) => {
     });
 
     return {
-      date: log.date,
+      date: day.date,
       totalVoiceNotes: 1, 
       symptoms: safeTags,
-      sentiment: log.sentiment
+      sentiment: "Neutral" // Or whatever default you prefer
     };
   });
+
+  // 3. Sort the final merged cards from newest to oldest
+  return dailySummaries.sort((a, b) => new Date(b.date) - new Date(a.date));
 };
 
 /* ------------------------------------------------------------------ */
