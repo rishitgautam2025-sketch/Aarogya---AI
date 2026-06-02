@@ -18,9 +18,20 @@ import {
 /* ------------------------------------------------------------------ */
 const computeDailySummaries = (logs) => {
   return logs.map(log => {
-    const symptomArray = Array.isArray(log.symptoms) ? log.symptoms : [];
+    // Safely parse the SQLite stringified array
+    let parsedSymptoms = [];
+    if (Array.isArray(log.symptoms)) {
+        parsedSymptoms = log.symptoms;
+    } else if (typeof log.symptoms === 'string') {
+        try {
+            parsedSymptoms = JSON.parse(log.symptoms.replace(/'/g, '"'));
+        } catch (e) {
+            parsedSymptoms = [log.symptoms];
+        }
+    }
+
     const counts = {};
-    symptomArray.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+    parsedSymptoms.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
     
     const safeTags = Object.entries(counts).map(([symptom, count]) => {
       if (symptom.toLowerCase().includes("chest pain") && count > 1) return { type: "WORSENING", label: `${symptom}` };
@@ -31,7 +42,7 @@ const computeDailySummaries = (logs) => {
     return {
       date: log.date,
       totalVoiceNotes: 1, 
-      symptoms: safeTags,
+      symptoms: safeTags, // This is now an array of formatted objects!
       sentiment: log.sentiment
     };
   });
@@ -78,6 +89,23 @@ const PeaceTimeDashboard = ({ elderName, dailyLogs, onExport }) => (
                 dailyLogs.map((log, index) => (
                     <div key={index} className="bg-white/[0.03] border border-white/10 rounded-2xl p-6">
                         <span className="text-sm font-bold text-slate-300">{log.date}</span>
+                        
+                        {/* AI Symptom Badges */}
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {log.symptoms && log.symptoms.length > 0 ? (
+                            log.symptoms.map((badge, idx) => (
+                              <span 
+                                key={idx} 
+                                className="px-3 py-1 text-xs font-semibold text-red-200 bg-red-900/50 border border-red-700 rounded-full"
+                              >
+                                {badge.label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-sm italic text-gray-500">No critical symptoms extracted</span>
+                          )}
+                        </div>
+
                     </div>
                 ))
             )}
