@@ -20,6 +20,8 @@ import json
 import os
 import traceback
 import uuid
+import openai
+from requests.auth import HTTPBasicAuth
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -192,20 +194,42 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
     if not elder:
         return {"reply": "Namaste! Aapka number register nahi hai. Apne bachche se contact karein."}
 
-    # --- 1. DOWNLOAD AUDIO IF IT EXISTS ---
+    # --- 1. DOWNLOAD AUDIO & TRANSCRIBE (WITH WHISPER) ---
     local_audio_path = None
+    text_to_process = body.lower() # Defaults to typed text if no audio
+
     if media_url_0:
-        audio_response = requests.get(media_url_0)
+        print("🎙️ Voice note detected! Downloading...")
+        # Use Twilio Auth to securely download the file (from your older code)
+        audio_response = requests.get(
+            media_url_0,
+            auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN)
+        )
         if audio_response.status_code == 200:
             filename = f"{uuid.uuid4()}.ogg"
             filepath = os.path.join("media", filename)
             with open(filepath, "wb") as f:
                 f.write(audio_response.content)
             local_audio_path = f"media/{filename}"
+            
+            print("🧠 Translating audio to English via Whisper...")
+            try:
+                openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                with open(filepath, "rb") as audio_file:
+                    # 'translations' automatically detects language and returns English!
+                    transcript = openai_client.audio.translations.create(
+                        model="whisper-1",
+                        file=audio_file
+                    )
+                text_to_process = transcript.text
+                print(f"✅ Translated Text: {text_to_process}")
+            except Exception as e:
+                print(f"[ERROR] Whisper Translation Failed: {e}")
+                text_to_process = "Voice note translation failed."
 
     # --- 2. PARSE MOOD & SYMPTOMS (GEMINI UPGRADE) ---
-    text = body.lower()
-    extracted_tags = extract_symptoms_for_whatsapp(body)
+    # Hand the Translated text to Gemini to pull the warning tags
+    extracted_tags = extract_symptoms_for_whatsapp(text_to_process)
     
     # Extract just the labels to save into your database
     symptoms = [tag['label'] for tag in extracted_tags] if extracted_tags else []
@@ -216,7 +240,7 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
             mood = 1
         elif any(tag['type'] == 'NEW SYMPTOM' for tag in extracted_tags):
             mood = 2
-    elif "theek" in text or "acha" in text or "badhiya" in text:
+    elif "theek" in text_to_process.lower() or "acha" in text_to_process.lower() or "badhiya" in text_to_process.lower():
         mood = 4
     
     # --- 3. SAVE TO DATABASE ---
@@ -224,8 +248,8 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
         elder_id=elder.id,
         mood=mood,
         symptoms=symptoms,
-        notes=body,
-        transcript=body, 
+        notes=body if body else "Voice Note", 
+        transcript=text_to_process,  # Save the English Whisper translation here!
         audio_url=local_audio_path, 
         source="whatsapp",
         log_date=date.today(),
