@@ -21,7 +21,7 @@ import os
 import traceback
 import uuid
 import io
-import openai
+from groq import Groq
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, date
 from pathlib import Path
@@ -195,43 +195,40 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
     if not elder:
         return {"reply": "Namaste! Aapka number register nahi hai. Apne bachche se contact karein."}
 
-    # --- 1. DOWNLOAD AUDIO & TRANSCRIBE (IN-MEMORY) ---
+    # --- 1. DOWNLOAD AUDIO & TRANSCRIBE (WITH GROQ IN-MEMORY) ---
     local_audio_path = None
     text_to_process = body.lower() 
 
     if media_url_0:
         print(f"🎙️ Voice note detected! Downloading from Twilio...")
         
-        # Download from Twilio using your original working Auth
         audio_response = requests.get(
             media_url_0,
             auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
         )
         
         if audio_response.status_code in [200, 201]:
-            print("✅ Audio downloaded successfully. Sending to Whisper...")
+            print("✅ Audio downloaded successfully. Sending to Groq Whisper...")
             try:
-                # Keep audio purely in RAM (No saving to disk!)
-                audio_buffer = io.BytesIO(audio_response.content)
-                audio_buffer.name = "voice_note.ogg" # Whisper needs to know the format
+                groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
                 
-                openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                
-                # Translate any language to English
-                transcript = openai_client.audio.translations.create(
-                    model="whisper-1",
-                    file=audio_buffer
+                # Send the raw memory bytes directly to Groq's Translation endpoint
+                # This automatically translates Hindi/Gujarati/Marathi into English text!
+                transcript = groq_client.audio.translations.create(
+                    model="whisper-large-v3",
+                    file=("voice_note.ogg", audio_response.content)
                 )
+                
                 text_to_process = transcript.text
-                print(f"✅ Translated Text: {text_to_process}")
+                print(f"✅ Translated Text from Groq: {text_to_process}")
                 
             except Exception as e:
-                print(f"❌ [ERROR] Whisper Translation Failed: {e}")
-                text_to_process = "" # Fallback so the server doesn't crash
+                print(f"❌ [ERROR] Groq Translation Failed: {e}")
+                text_to_process = "" 
         else:
             print(f"❌ [ERROR] Twilio Audio Download Failed. Status: {audio_response.status_code}")
 
-    # --- 2. PARSE MOOD & SYMPTOMS (GEMINI UPGRADE) ---
+    # --- 2. PARSE MOOD & SYMPTOMS (GEMINI) ---
     extracted_tags = extract_symptoms_for_whatsapp(text_to_process)
     symptoms = [tag['label'] for tag in extracted_tags] if extracted_tags else []
     
@@ -251,7 +248,7 @@ async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
         symptoms=symptoms,
         notes=body if body else "Voice Note", 
         transcript=text_to_process,  
-        audio_url=None, # We didn't save it locally, so this is None
+        audio_url=None, 
         source="whatsapp",
         log_date=date.today(),
         is_daily_summary=False,
