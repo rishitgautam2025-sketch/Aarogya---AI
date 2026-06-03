@@ -172,6 +172,7 @@ export default function App() {
   const [showRawData, setShowRawData] = useState(false);
   const [dailyLogs, setDailyLogs] = useState([]);
   const [elderName, setElderName] = useState("Loading...");
+  const [elderContact, setElderContact] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false); 
 
   // --- AUDIO FIX ---
@@ -255,13 +256,17 @@ export default function App() {
   // --- DATA FETCHING ---
   useEffect(() => {
     const fetchDashboardData = async () => {
-      try {
-        const response = await axios.get(`${API_URL}/api/dashboard/1`); 
-        setElderName(response.data.elder.name);
-        setIsEmergency(response.data.elder.status === "attention");
-        setDailyLogs(computeDailySummaries(response.data.notes));
-      } catch (error) { console.error("Error fetching live data:", error); }
-    };
+    try {
+      const response = await axios.get(`${API_URL}/api/dashboard/1`); 
+      setElderName(response.data.elder.name);
+      
+      // 👇 Grab the phone number from your database (make sure the key matches your backend!)
+      setElderContact(response.data.elder.emergency_contact || response.data.elder.phone); 
+
+      setIsEmergency(response.data.elder.status === "attention");
+      setDailyLogs(computeDailySummaries(response.data.notes));
+    } catch (error) { console.error("Error fetching live data:", error); }
+  };
     fetchDashboardData();
     const interval = setInterval(fetchDashboardData, 5000); 
     return () => clearInterval(interval);
@@ -282,7 +287,8 @@ export default function App() {
       
       {isEmergency && !isDismissed ? (
         <EmergencyAlert 
-          onCall={() => alert("Calling...")} 
+          // 👇 Now it dynamically dials whoever is registered!
+          onCall={() => window.location.href = `tel:${elderContact}`} 
           onToggleDetails={() => setShowRawData(!showRawData)} 
           showDetails={showRawData} 
           onDismiss={() => setIsDismissed(true)} 
