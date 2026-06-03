@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_URL } from './api'; // 👈 Secured live API link
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import RegisterElderModal from './components/RegisterElderModal'; // 👈 Imported your Modal
 import { 
   Phone, 
@@ -172,10 +174,9 @@ export default function App() {
   const [elderName, setElderName] = useState("Loading...");
   const [isModalOpen, setIsModalOpen] = useState(false); 
 
-  // 👇 THE AUDIO FIX: Create the audio object once
+  // --- AUDIO FIX ---
   const alarmAudio = React.useRef(typeof window !== "undefined" ? new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3') : null);
 
-  // 👇 THE AUDIO FIX: Control it safely with React state
   useEffect(() => {
     if (isEmergency && !isDismissed) {
       if (alarmAudio.current) {
@@ -185,27 +186,73 @@ export default function App() {
     } else {
       if (alarmAudio.current) {
         alarmAudio.current.pause();
-        alarmAudio.current.currentTime = 0; // Rewinds it
+        alarmAudio.current.currentTime = 0; 
       }
     }
-    
-    // Cleanup if we leave the page
     return () => {
       if (alarmAudio.current) alarmAudio.current.pause();
     };
   }, [isEmergency, isDismissed]);
 
+  // --- PDF EXPORT FIX ---
   const exportSymptomLog = () => {
-    const dataStr = JSON.stringify(dailyLogs, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Aarogya_Clinical_Export.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    const doc = new jsPDF();
+
+    doc.setFontSize(22);
+    doc.setTextColor(15, 23, 42); 
+    doc.text('Aarogya AI - Clinical Report', 14, 20);
+
+    doc.setFontSize(11);
+    doc.setTextColor(100, 116, 139); 
+    doc.text(`Patient Name: ${elderName}`, 14, 30);
+    doc.text(`Generated On: ${new Date().toLocaleDateString()}`, 14, 36);
+    
+    doc.setDrawColor(226, 232, 240);
+    doc.line(14, 42, 196, 42);
+
+    const tableColumn = ["Date", "Reported Symptoms", "Status"];
+    const tableRows = [];
+
+    dailyLogs.forEach(log => {
+      const symptomText = log.symptoms && log.symptoms.length > 0 
+        ? log.symptoms.map(s => s.label).join(', ') 
+        : "All Clear - No Symptoms Reported";
+      
+      const statusText = log.symptoms && log.symptoms.length > 0 
+        ? "Requires Attention" 
+        : "Stable";
+
+      tableRows.push([log.date, symptomText, statusText]);
+    });
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 48,
+      theme: 'grid',
+      headStyles: { 
+        fillColor: [16, 185, 129], 
+        textColor: 255,
+        fontStyle: 'bold'
+      },
+      alternateRowStyles: { fillColor: [248, 250, 252] }, 
+      styles: { 
+        font: 'helvetica', 
+        fontSize: 10, 
+        cellPadding: 5,
+        valign: 'middle'
+      },
+      columnStyles: {
+        0: { cellWidth: 35 }, 
+        2: { cellWidth: 40 }  
+      }
+    });
+
+    const cleanName = elderName.replace(/\s+/g, '_');
+    doc.save(`Aarogya_Report_${cleanName}.pdf`);
   };
 
+  // --- DATA FETCHING ---
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
@@ -220,11 +267,9 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // --- UI RENDERING ---
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-200 font-sans p-4 md:p-8">
-      
-      {/* 🚨 Notice the <audio> tag is completely gone from here! */}
-
       <header className="max-w-6xl mx-auto mb-8 flex justify-between items-center">
         <h1 className="text-xl font-bold text-white">Aarogya AI Dashboard</h1>
         <button 
