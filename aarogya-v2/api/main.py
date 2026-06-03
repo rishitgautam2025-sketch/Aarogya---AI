@@ -174,7 +174,19 @@ def extract_symptoms_for_whatsapp(text: str):
     try:
         prompt = f"""Extract symptoms from: "{text}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
         response = gemini_model.generate_content(prompt)
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
+        clean_text = response.text
+        
+        # --- THE BULLETPROOF JSON SCISSORS ---
+        start_idx = clean_text.find('[')
+        end_idx = clean_text.rfind(']') + 1
+        
+        if start_idx != -1 and end_idx != -1:
+            clean_text = clean_text[start_idx:end_idx]
+        else:
+            print(f"[WARN] No brackets found in Gemini response: {clean_text}")
+            return []
+        # ------------------------------------
+
         return json.loads(clean_text)
     except Exception as e:
         print(f"[ERROR] Gemini Extraction Failed: {e}")
