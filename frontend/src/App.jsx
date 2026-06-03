@@ -13,6 +13,22 @@ import {
   Plus // 👈 Added a Plus icon for the button
 } from 'lucide-react';
 
+
+const getSymptomColor = (symptomName) => {
+  const text = symptomName.toLowerCase();
+  
+  // High Severity = Red
+  if (text.includes("chest") || text.includes("breath") || text.includes("severe") || text.includes("bleeding")) {
+    return "bg-red-900/50 text-red-400 border-red-700/50";
+  }
+  // Medium Severity = Orange/Amber
+  if (text.includes("fever") || text.includes("pain") || text.includes("migraine")) {
+    return "bg-amber-900/50 text-amber-400 border-amber-700/50";
+  }
+  // Low/Default Severity = Blue/Gray
+  return "bg-slate-800 text-slate-300 border-slate-600";
+};
+
 /* ------------------------------------------------------------------ */
 //  1. DATA PROCESSING
 /* ------------------------------------------------------------------ */
@@ -105,7 +121,6 @@ const PeaceTimeDashboard = ({ elderName, dailyLogs, onExport }) => (
         <div className="lg:col-span-2 space-y-6">
             <h3 className="text-lg font-bold text-white flex items-center gap-2"><FileText className="w-5 h-5 text-cyan-400" /> Symptom History</h3>
             {dailyLogs.length === 0 ? (
-                /* The Gentle Nudge (Replaces the empty gray box) */
                 <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-8 text-center space-y-3">
                     <p className="text-slate-300 font-medium text-lg">No recent updates.</p>
                     <p className="text-slate-500 text-sm">They haven't responded recently. It might be a good time to send a quick check-in message!</p>
@@ -115,19 +130,18 @@ const PeaceTimeDashboard = ({ elderName, dailyLogs, onExport }) => (
                     <div key={index} className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 flex flex-col">
                         <span className="text-sm font-bold text-slate-300">{log.date}</span>
                         
-                        {/* AI Symptom Badges */}
                         <div className="flex flex-wrap gap-2 mt-3">
                           {log.symptoms && log.symptoms.length > 0 ? (
                             log.symptoms.map((badge, idx) => (
                               <span 
                                 key={idx} 
-                                className="px-3 py-1 text-xs font-semibold text-red-200 bg-red-900/50 border border-red-700 rounded-full"
+                                // 👇 HERE IS THE FIX FOR THE SEA OF RED
+                                className={`px-3 py-1 text-xs font-semibold rounded-full ${getSymptomColor(badge.label)}`}
                               >
                                 {badge.label}
                               </span>
                             ))
                           ) : (
-                            /* The "All Clear" Badge */
                             <span className="px-3 py-1 text-xs font-semibold text-emerald-200 bg-emerald-900/50 border border-emerald-700 rounded-full flex items-center gap-1 w-fit">
                               <ShieldCheck className="w-3 h-3" /> All Clear
                             </span>
@@ -156,9 +170,30 @@ export default function App() {
   const [showRawData, setShowRawData] = useState(false);
   const [dailyLogs, setDailyLogs] = useState([]);
   const [elderName, setElderName] = useState("Loading...");
-  
-  // 👈 Added State to control your Modal
   const [isModalOpen, setIsModalOpen] = useState(false); 
+
+  // 👇 THE AUDIO FIX: Create the audio object once
+  const alarmAudio = React.useRef(typeof window !== "undefined" ? new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3') : null);
+
+  // 👇 THE AUDIO FIX: Control it safely with React state
+  useEffect(() => {
+    if (isEmergency && !isDismissed) {
+      if (alarmAudio.current) {
+        alarmAudio.current.loop = true;
+        alarmAudio.current.play().catch(e => console.log("Browser blocked auto-play:", e));
+      }
+    } else {
+      if (alarmAudio.current) {
+        alarmAudio.current.pause();
+        alarmAudio.current.currentTime = 0; // Rewinds it
+      }
+    }
+    
+    // Cleanup if we leave the page
+    return () => {
+      if (alarmAudio.current) alarmAudio.current.pause();
+    };
+  }, [isEmergency, isDismissed]);
 
   const exportSymptomLog = () => {
     const dataStr = JSON.stringify(dailyLogs, null, 2);
@@ -174,7 +209,6 @@ export default function App() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        // 👈 Swapped out the hardcoded 127.0.0.1 for your dynamic API_URL
         const response = await axios.get(`${API_URL}/api/dashboard/1`); 
         setElderName(response.data.elder.name);
         setIsEmergency(response.data.elder.status === "attention");
@@ -188,13 +222,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-200 font-sans p-4 md:p-8">
-      {isEmergency && (
-        <audio autoPlay loop>
-          <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg" />
-        </audio>
-      )}
+      
+      {/* 🚨 Notice the <audio> tag is completely gone from here! */}
 
-      {/* 👈 Added the Add Patient button to your header */}
       <header className="max-w-6xl mx-auto mb-8 flex justify-between items-center">
         <h1 className="text-xl font-bold text-white">Aarogya AI Dashboard</h1>
         <button 
@@ -210,7 +240,7 @@ export default function App() {
           onCall={() => alert("Calling...")} 
           onToggleDetails={() => setShowRawData(!showRawData)} 
           showDetails={showRawData} 
-          onDismiss={() => setIsDismissed(true)} // 👈 3. Change this to set your new state
+          onDismiss={() => setIsDismissed(true)} 
         />
       ) : (
         <PeaceTimeDashboard 
@@ -220,7 +250,6 @@ export default function App() {
         />
       )}
 
-      {/* 👈 Placed the Modal at the bottom, hooked up to the state */}
       {isModalOpen && (
         <RegisterElderModal onClose={() => setIsModalOpen(false)} />
       )}
