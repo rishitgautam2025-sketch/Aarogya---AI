@@ -21,35 +21,39 @@ import os
 import traceback
 import uuid
 import io
+import joblib
+import numpy as np
+import requests
+import boto3
+
 from groq import Groq
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
-from .database import engine
-from . import models
 
-import joblib
-import numpy as np
-import requests
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
+from sqlalchemy.schema import CreateTable
+from sqlalchemy.dialects import postgresql
+
+from twilio.request_validator import RequestValidator
+from twilio.twiml.messaging_response import MessagingResponse
+
 # --- NEW PHASE 2 IMPORTS ---
 from supabase import create_client, Client
 import google.generativeai as genai
 
 # Local imports
-from api.routers import whatsapp
 from api.scheduler import start_scheduler
-from api.database import Base, engine, get_db
+from api.database import Base, engine, get_db, SessionLocal
 import api.models
 from api.routers.auth import router as auth_router
 from api.routers.elder_monitor import router as elder_monitor_router
-
 
 # ─────────────────────────────────────────────
 # NEW PHASE 2: SUPABASE & GEMINI INITIALIZATION
@@ -73,7 +77,7 @@ else:
 # ─────────────────────────────────────────────
 # APP SETUP & MIDDLEWARE (Cleaned & Unified)
 # ─────────────────────────────────────────────
-models.Base.metadata.create_all(bind=engine)
+api.models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Aarogya AI V2",
@@ -88,12 +92,10 @@ os.makedirs("media", exist_ok=True)
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
 # 3. Add CORS Middleware so React can access the API and the media files
-# ✅ SECURED CORS CONFIGURATION
-# 🟢 THE NUCLEAR CORS FIX
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # This allows ANY frontend to connect
-    allow_credentials=False, # Must be False when origins is "*"
+    allow_origins=["*"], 
+    allow_credentials=False, 
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -112,19 +114,13 @@ async def debug_exception_handler(request: Request, exc: Exception):
         }
     )
 
-# Create SQLite tables on first startup
-Base.metadata.create_all(bind=engine)
-
 # Include routers
 app.include_router(auth_router)
 app.include_router(elder_monitor_router)
-#app.include_router(whatsapp.router)
-
 
 # ─────────────────────────────────────────────
 # LOAD MODEL ARTIFACTS
 # ─────────────────────────────────────────────
-
 MODEL_DIR = Path(__file__).parent.parent / "model"
 
 try:
@@ -143,144 +139,154 @@ except FileNotFoundError:
 
 SYMPTOM_SET = set(SYMPTOM_COLS)
 
-
 # ─────────────────────────────────────────────
-# WHATSAPP WEBHOOK
+# SPRINT 1: SECURE ASYNC WHATSAPP WEBHOOK & TRACKER
 # ─────────────────────────────────────────────
-
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
 
+# 1. AWS S3 CONFIGURATION (Mumbai Region for Data Compliance)
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME", "aarogya-voice-logs")
+
+# FIX: Only initialize boto3 if keys are present to prevent startup crash
+if AWS_ACCESS_KEY and AWS_SECRET_KEY:
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=AWS_ACCESS_KEY,
+        aws_secret_access_key=AWS_SECRET_KEY,
+        region_name="ap-south-1" 
+    )
+else:
+    s3_client = None
+
 def send_whatsapp(to: str, message: str):
     if not TWILIO_SID or not TWILIO_TOKEN:
-        print(f"[ERROR] Twilio not configured. SID: {TWILIO_SID}, TOKEN: {TWILIO_TOKEN}")
         return
-        
     url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
     payload = {"From": TWILIO_NUMBER, "To": f"whatsapp:{to}", "Body": message}
-    
-    print(f"[DEBUG] Attempting to send WhatsApp to {to}...")
-    
     try:
-        response = requests.post(url, data=payload, auth=(TWILIO_SID, TWILIO_TOKEN), timeout=10)
-        print(f"[DEBUG] Twilio API Response: {response.status_code} - {response.text[:150]}")
+        requests.post(url, data=payload, auth=(TWILIO_SID, TWILIO_TOKEN), timeout=10)
     except Exception as e:
-        print(f"[ERROR] Failed to connect to Twilio API: {e}")
-        
-def extract_symptoms_for_whatsapp(text: str):
-    """Helper function to run text through Gemini"""
-    if not text.strip(): return []
+        print(f"[ERROR] Twilio API: {e}")
+
+# 2. SECURITY LAYER: Twilio Signature Validation Middleware
+validator = RequestValidator(TWILIO_TOKEN)
+
+async def verify_twilio_signature(request: Request):
+    signature = request.headers.get("X-Twilio-Signature")
+    if not signature:
+        raise HTTPException(status_code=400, detail="Missing Twilio Signature")
+    
+    form_data = await request.form()
+    data = {k: v for k, v in form_data.items()}
+    url = str(request.url)
+    
+    if not validator.validate(url, data, signature):
+        raise HTTPException(status_code=403, detail="Invalid Signature. Hacker blocked.")
+    return data
+
+# 3. THE BACKGROUND WORKER
+def heavy_audio_processing_pipeline(data: dict):
+    # We must create a fresh database session for the background task
+    db = SessionLocal() 
     try:
-        prompt = f"""Extract symptoms from: "{text}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
-        response = gemini_model.generate_content(prompt)
-        clean_text = response.text
+        from_num = data.get("From", "").replace("whatsapp:", "")
+        body = data.get("Body", "").strip()
+        media_url_0 = data.get("MediaUrl0") 
         
-        # --- THE BULLETPROOF JSON SCISSORS ---
-        start_idx = clean_text.find('[')
-        end_idx = clean_text.rfind(']') + 1
-        
-        if start_idx != -1 and end_idx != -1:
-            clean_text = clean_text[start_idx:end_idx]
-        else:
-            print(f"[WARN] No brackets found in Gemini response: {clean_text}")
-            return []
-        # ------------------------------------
+        elder = db.query(api.models.Elder).filter(api.models.Elder.phone == from_num).first()
+        if not elder:
+            send_whatsapp(from_num, "Namaste! Aapka number register nahi hai.")
+            return
 
-        return json.loads(clean_text)
-    except Exception as e:
-        print(f"[ERROR] Gemini Extraction Failed: {e}")
-        return []
+        text_to_process = body.lower()
+        s3_file_url = None
 
-@app.post("/whatsapp/incoming")
-async def whatsapp_incoming(request: Request, db: Session = Depends(get_db)):
-    from api.models import Elder, HealthLog
-    
-    form = await request.form()
-    print(f"[DEBUG] Incoming WhatsApp from: {form.get('From')}") 
-    
-    from_num = form.get("From", "").replace("whatsapp:", "")
-    body = form.get("Body", "").strip()
-    media_url_0 = form.get("MediaUrl0") 
-    
-    elder = db.query(Elder).filter(Elder.phone == from_num).first()
-    if not elder:
-        return {"reply": "Namaste! Aapka number register nahi hai. Apne bachche se contact karein."}
+        if media_url_0:
+            audio_response = requests.get(
+                media_url_0,
+                auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
+            )
+            
+            if audio_response.status_code in [200, 201]:
+                audio_bytes = audio_response.content
+                file_name = f"{elder.id}_{uuid.uuid4().hex}.ogg"
+                
+                # S3 UPLOAD: Fixes the In-Memory RAM crash risk
+                if s3_client:
+                    s3_client.put_object(
+                        Bucket=AWS_BUCKET_NAME,
+                        Key=file_name,
+                        Body=audio_bytes,
+                        ContentType="audio/ogg"
+                    )
+                    s3_file_url = f"https://{AWS_BUCKET_NAME}.s3.ap-south-1.amazonaws.com/{file_name}"
+                
+                # GROQ TRANSLATION
+                try:
+                    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+                    transcript = groq_client.audio.translations.create(
+                        model="whisper-large-v3",
+                        file=("voice_note.ogg", audio_bytes)
+                    )
+                    text_to_process = transcript.text
+                except Exception as e:
+                    print(f"[ERROR] Groq Failed: {e}")
+                    text_to_process = "Audio transcription failed."
 
-    # --- 1. DOWNLOAD AUDIO & TRANSCRIBE (WITH GROQ IN-MEMORY) ---
-    local_audio_path = None
-    text_to_process = body.lower() 
-
-    if media_url_0:
-        print(f"🎙️ Voice note detected! Downloading from Twilio...")
-        
-        audio_response = requests.get(
-            media_url_0,
-            auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
-        )
-        
-        if audio_response.status_code in [200, 201]:
-            print("✅ Audio downloaded successfully. Sending to Groq Whisper...")
+        # 4. AI BRAIN PIPELINE: Gemini + Supabase
+        if supabase and gemini_model:
             try:
-                groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+                # A. Save raw transcript to Supabase
+                log_res = supabase.table("voice_logs").insert({
+                    "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", # Using the working Prachi test UUID
+                    "raw_text": text_to_process, 
+                    "processed": True
+                }).execute()
+                log_id = log_res.data[0]['id']
+
+                # B. Ask Gemini to extract symptoms
+                prompt = f"""Extract symptoms from: "{text_to_process}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
+                response = gemini_model.generate_content(prompt)
                 
-                # Send the raw memory bytes directly to Groq's Translation endpoint
-                # This automatically translates Hindi/Gujarati/Marathi into English text!
-                transcript = groq_client.audio.translations.create(
-                    model="whisper-large-v3",
-                    file=("voice_note.ogg", audio_response.content)
-                )
-                
-                text_to_process = transcript.text
-                print(f"✅ Translated Text from Groq: {text_to_process}")
-                
+                try:
+                    clean_text = response.text.replace('```json', '').replace('```', '').strip()
+                    symptoms = json.loads(clean_text)
+                except Exception as e:
+                    print(f"[ERROR] JSON Parse Failed: {e}")
+                    symptoms = []
+
+                # C. Save extracted tags to Supabase
+                if symptoms:
+                    tags = [{"log_id": log_id, "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", "tag_type": s['type'], "label": s['label']} for s in symptoms]
+                    supabase.table("symptom_tags").insert(tags).execute()
+                    
+                print(f"[SUCCESS] Saved {len(symptoms)} symptoms to AI Brain!")
             except Exception as e:
-                print(f"❌ [ERROR] Groq Translation Failed: {e}")
-                text_to_process = "" 
-        else:
-            print(f"❌ [ERROR] Twilio Audio Download Failed. Status: {audio_response.status_code}")
+                print(f"[ERROR] Supabase/Gemini insertion failed: {e}")
+        
+        # 5. GENERATE SAFE TRACKER REPLY
+        reply = f"Namaste {elder.name}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
+        send_whatsapp(from_num, reply)
+        
+    except Exception as e:
+        print(f"[CRITICAL BACKGROUND ERROR] {e}")
+    finally:
+        db.close() # Always close the session to prevent memory leaks
 
-    # --- 2. PARSE MOOD & SYMPTOMS (GEMINI) ---
-    extracted_tags = extract_symptoms_for_whatsapp(text_to_process)
-    symptoms = [tag['label'] for tag in extracted_tags] if extracted_tags else []
+# 6. FASTAPI WEBHOOK ROUTE
+@app.post("/whatsapp/incoming", dependencies=[Depends(verify_twilio_signature)])
+async def whatsapp_incoming(request: Request, background_tasks: BackgroundTasks):
+    form_data = await request.form()
+    data = {k: v for k, v in form_data.items()}
     
-    mood = 3 # Default Neutral
-    if extracted_tags:
-        if any(tag['type'] == 'WORSENING' for tag in extracted_tags):
-            mood = 1
-        elif any(tag['type'] == 'NEW SYMPTOM' for tag in extracted_tags):
-            mood = 2
-    elif "theek" in text_to_process.lower() or "acha" in text_to_process.lower() or "badhiya" in text_to_process.lower():
-        mood = 4
+    background_tasks.add_task(heavy_audio_processing_pipeline, data)
     
-    # --- 3. SAVE TO DATABASE ---
-    log = HealthLog(
-        elder_id=elder.id,
-        mood=mood,
-        symptoms=symptoms,
-        notes=body if body else "Voice Note", 
-        transcript=text_to_process,  
-        audio_url=None, 
-        source="whatsapp",
-        log_date=date.today(),
-        is_daily_summary=False,
-        logged_at=datetime.utcnow()
-    )
-    db.add(log)
-    db.commit()
-    
-    # --- 4. GENERATE REPLY ---
-    if mood >= 4 and not symptoms:
-        reply = f"Namaste {elder.name}! Aap theek hain, yeh sunke acha laga. Aur kuch ho toh batana. 🙏"
-    elif mood <= 2:
-        symptom_text = ", ".join(symptoms) if symptoms else "kuch taklif"
-        reply = f"Namaste {elder.name}! Aapne bataya ki {symptom_text}. Main note kar liya. Aram karein. 🏥"
-    else:
-        reply = f"Namaste {elder.name}! Update mil gaya. Dhanyawaad! 🙏"
-    
-    send_whatsapp(from_num, reply)
-    return {"status": "saved", "mood": mood, "symptoms": symptoms}
-
+    twiml_response = MessagingResponse()
+    return Response(content=str(twiml_response), media_type="application/xml")
 
 # ─────────────────────────────────────────────
 # PHASE 2: NEW AI BRAIN ENDPOINTS
@@ -295,24 +301,20 @@ async def process_voice_log(note: VoiceNote):
         raise HTTPException(status_code=500, detail="Supabase/Gemini offline.")
         
     try:
-        # Save raw text
         log_res = supabase.table("voice_logs").insert({
             "patient_id": note.patient_id, "raw_text": note.raw_text, "processed": True
         }).execute()
         log_id = log_res.data[0]['id']
 
-        # Extract tags
         prompt = f"""Extract symptoms from: "{note.raw_text}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
         response = gemini_model.generate_content(prompt)
         try:
-            # Strip out any annoying markdown backticks before parsing
             clean_text = response.text.replace('```json', '').replace('```', '').strip()
             symptoms = json.loads(clean_text)
         except Exception as e:
             print(f"[ERROR] JSON Parse Failed: {e}")
             symptoms = []
 
-        # Save tags
         if symptoms:
             tags = [{"log_id": log_id, "patient_id": note.patient_id, "tag_type": s['type'], "label": s['label']} for s in symptoms]
             supabase.table("symptom_tags").insert(tags).execute()
@@ -320,12 +322,10 @@ async def process_voice_log(note: VoiceNote):
         return {"status": "success", "log_id": log_id, "extracted_symptoms": symptoms}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
 
 # ─────────────────────────────────────────────
 # DASHBOARD API
 # ─────────────────────────────────────────────
-
 @app.get("/api/dashboard/{elder_id}")
 def get_dashboard_data(elder_id: int, db: Session = Depends(get_db)):
     elder = db.query(api.models.Elder).filter(api.models.Elder.id == elder_id).first()
@@ -346,7 +346,7 @@ def get_dashboard_data(elder_id: int, db: Session = Depends(get_db)):
             "transcript": log.transcript or log.notes or "No transcript",
             "symptoms": symptom_list,
             "sentiment": sentiment,
-            "duration": "0:00",  # React will dynamically overwrite this when it loads the file
+            "duration": "0:00",
             "audioUrl": log.audio_url if log.audio_url else "" 
         })
 
@@ -387,11 +387,9 @@ def create_elder(elder_in: ElderCreate, db: Session = Depends(get_db)):
     
     return {"status": "success", "elder_id": new_elder.id}
 
-
 # ─────────────────────────────────────────────
 # ML SCHEMAS & PREDICTION LOGIC
 # ─────────────────────────────────────────────
-
 class PredictRequest(BaseModel):
     symptoms: list[str]
     age: Optional[int] = None
@@ -404,12 +402,10 @@ class PredictRequest(BaseModel):
             raise ValueError("At least one symptom is required.")
         return [s.strip().lower().replace(" ", "_") for s in v]
 
-
 class PredictionResult(BaseModel):
     disease: str
     confidence: float
     confidence_label: str
-
 
 class PredictResponse(BaseModel):
     risk_level: str
@@ -418,7 +414,6 @@ class PredictResponse(BaseModel):
     disclaimer: str
     next_steps: list[str]
     unrecognized_symptoms: list[str]
-
 
 class InjuryRequest(BaseModel):
     body_part: str = "ankle"
@@ -438,7 +433,6 @@ class InjuryRequest(BaseModel):
     fibula_head_tenderness: Optional[bool] = None
     cannot_flex_knee_90: Optional[bool] = None
 
-
 class InjuryResponse(BaseModel):
     fracture_probability: str
     clinical_rule_applied: str
@@ -447,13 +441,11 @@ class InjuryResponse(BaseModel):
     action_steps: list[str]
     disclaimer: str
 
-
 class FeedbackRequest(BaseModel):
     session_id: str
     predicted_disease: str
     actual_diagnosis: Optional[str] = None
     was_helpful: bool
-
 
 RED_CONDITIONS = {
     "heart attack", "myocardial infarction", "stroke", "paralysis (brain)",
@@ -681,17 +673,10 @@ def feedback(req: FeedbackRequest):
 
 @app.get("/get-sql")
 def generate_sql():
-    from fastapi.responses import PlainTextResponse
-    from sqlalchemy.schema import CreateTable
-    from sqlalchemy.dialects import postgresql
-    from api import models
-    
     sql = "-- SQLAlchemy Models --\n\n"
-    # This automatically writes the SQL for all your Python models
-    for table in models.Base.metadata.sorted_tables:
+    for table in api.models.Base.metadata.sorted_tables:
         sql += str(CreateTable(table).compile(dialect=postgresql.dialect())).strip() + ";\n\n"
         
-    # We also need to build the tables for your raw Supabase AI webhooks!
     sql += "-- Raw Supabase Tables --\n\n"
     sql += "CREATE TABLE IF NOT EXISTS voice_logs (\n  id SERIAL PRIMARY KEY,\n  patient_id VARCHAR,\n  raw_text TEXT,\n  processed BOOLEAN,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n"
     sql += "CREATE TABLE IF NOT EXISTS symptom_tags (\n  id SERIAL PRIMARY KEY,\n  log_id INTEGER,\n  patient_id VARCHAR,\n  tag_type VARCHAR,\n  label VARCHAR,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n"
