@@ -18,3 +18,4 @@ python-multipart
 sqlalchemy
 google-generativeai
 apscheduler
+boto3
