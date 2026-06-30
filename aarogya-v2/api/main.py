@@ -347,12 +347,42 @@ def heavy_audio_processing_pipeline(data: dict):
                 CRITICAL_KEYWORDS = ["chest pain", "shortness of breath", "breathing difficulty", "suffocated", "dizzy", "unconscious", "heavy bleeding", "fainting", "sharp headache"]
 
                 if symptoms:
+                    print("DEBUG: Checking extracted symptoms against critical keywords...")
                     for s in symptoms:
                         tag_label = s.get('label', '').lower()
-                        # C. Save extracted tags to Supabase
-        try:  # <--- THIS WAS MISSING
+                        
+                        # Check if any critical keyword matches or is inside the symptom label
+                        if any(keyword in tag_label for keyword in CRITICAL_KEYWORDS):
+                            print(f"🚨 CRITICAL SYMPTOM DETECTED: '{tag_label}'. Triggering alert workflow...")
+                            
+                            # Crash-proof check for the patient name
+                            if 'elder' in locals() and elder:
+                                p_name = getattr(elder, 'name', 'Unknown Patient')
+                            else:
+                                p_name = 'Prachi (Test Patient)'
+                            
+                            # Trigger the emergency email dispatch instantly!
+                            send_emergency_alert(
+                                patient_name=p_name,
+                                symptom=s.get('label', 'General Symptom'),
+                                raw_message=text_to_process
+                            )
+                            break # Alert sent, no need to send duplicate emails if multiple match
+
+        # ==========================================
+        # C. Save extracted tags to Supabase
+        # ==========================================
+        try:  
             if symptoms:
-                tags = [{"log_id": log_id, "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", "tag": t.get("label")} for t in symptoms]
+                tags = [
+                    {
+                        "log_id": log_id, 
+                        "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", 
+                        "tag_type": t.get("type", "NEW SYMPTOM"), 
+                        "label": t.get("label", "General Symptom")
+                    } 
+                    for t in symptoms
+                ]
                 supabase.table("symptom_tags").insert(tags).execute()
 
             print(f"[SUCCESS] Saved {len(symptoms)} symptoms to AI Brain!")
@@ -363,13 +393,16 @@ def heavy_audio_processing_pipeline(data: dict):
             traceback.print_exc()
         
         # 5. GENERATE SAFE TRACKER REPLY
-        reply = f"Namaste {elder.name}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
+        # Safe fallback check for elder name to prevent crashes here too
+        p_name_whatsapp = elder.name if ('elder' in locals() and elder) else "Prachi"
+        reply = f"Namaste {p_name_whatsapp}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
         send_whatsapp(from_num, reply)
         
     except Exception as e:
         print(f"[CRITICAL BACKGROUND ERROR] {e}")
     finally:
-        db.close() # Always close the session to prevent memory leaks
+        if 'db' in locals() and db:
+            db.close() # Always close the session to prevent memory leaks
 
 # 6. FASTAPI WEBHOOK ROUTE
 @app.post("/whatsapp/incoming", dependencies=[Depends(verify_twilio_signature)])
