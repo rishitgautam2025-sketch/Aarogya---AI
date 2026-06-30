@@ -61,42 +61,46 @@ import smtplib
 from email.message import EmailMessage
 
 def send_emergency_alert(patient_name, symptom, raw_message):
-    print("DEBUG: Entering send_emergency_alert function...")
-    SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
-    APP_PASSWORD = os.getenv("EMAIL_PASS")
+    print("DEBUG: Entering send_emergency_alert function via Resend HTTP API...")
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     RECEIVER_EMAIL = "rishitgautam8@gmail.com"
 
-    # 🚨 CRITICAL CHECK: Did Render load the password?
-    if not APP_PASSWORD:
-        print("[ERROR] EMAIL_PASS environment variable is completely empty or missing!")
+    if not RESEND_API_KEY:
+        print("[ERROR] RESEND_API_KEY environment variable is missing!")
         return
 
-    msg = EmailMessage()
-    msg.set_content(f"""
+    # Prepare the HTTP headers and payload
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    email_body = f"""
     CRITICAL HEALTH ALERT
     Patient: {patient_name}
     Flagged Symptom: {symptom}
     Original Transcript: "{raw_message}"
-    """)
+    """
 
-    msg['Subject'] = f"URGENT: Aarogya AI Alert - {patient_name}"
-    msg['From'] = SENDER_EMAIL
-    msg['To'] = RECEIVER_EMAIL
+    payload = {
+        "from": "Aarogya AI <onboarding@resend.dev>", # Free tier default sender
+        "to": [RECEIVER_EMAIL],
+        "subject": f"URGENT: Aarogya AI Alert - {patient_name}",
+        "text": email_body
+    }
 
     try:
-        print(f"DEBUG: Connecting to SMTP server as {SENDER_EMAIL} via Port 587...")
-        # 1. Switch to standard SMTP with port 587
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
-            server.ehlo()          # Identify your bot to the server
-            server.starttls()      # Upgrade the connection to secure TLS encryption
-            server.ehlo()          # Re-identify over the secure connection
+        print("DEBUG: Sending email via Resend secure HTTPS port 443...")
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if response.status_code in [200, 201, 202]:
+            print("[SUCCESS] Emergency email dispatched securely via Resend HTTP API!")
+        else:
+            print(f"[ERROR] Resend API rejected request: {response.status_code} - {response.text}")
             
-            server.login(SENDER_EMAIL, APP_PASSWORD)
-            server.send_message(msg)
-            
-        print("[SUCCESS] Emergency email dispatched securely!")
     except Exception as e:
-        print(f"[ERROR] Critical failure sending email: {e}")
+        print(f"[ERROR] Critical failure sending email via HTTP: {e}")
 
 # ─────────────────────────────────────────────
 # NEW PHASE 2: SUPABASE & GEMINI INITIALIZATION
