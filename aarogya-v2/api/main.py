@@ -84,13 +84,18 @@ def send_emergency_alert(patient_name, symptom, raw_message):
     msg['To'] = RECEIVER_EMAIL
 
     try:
-        print(f"DEBUG: Connecting to SMTP server as {SENDER_EMAIL}...")
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+        print(f"DEBUG: Connecting to SMTP server as {SENDER_EMAIL} via Port 587...")
+        # 1. Switch to standard SMTP with port 587
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.ehlo()          # Identify your bot to the server
+            server.starttls()      # Upgrade the connection to secure TLS encryption
+            server.ehlo()          # Re-identify over the secure connection
+            
             server.login(SENDER_EMAIL, APP_PASSWORD)
             server.send_message(msg)
+            
         print("[SUCCESS] Emergency email dispatched securely!")
     except Exception as e:
-        # This will catch Google App Password rejections
         print(f"[ERROR] Critical failure sending email: {e}")
 
 # ─────────────────────────────────────────────
