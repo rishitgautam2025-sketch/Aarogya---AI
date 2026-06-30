@@ -25,6 +25,8 @@ import joblib
 import numpy as np
 import requests
 import boto3
+import smtplib
+from email.message import EmailMessage
 
 from groq import Groq
 from requests.auth import HTTPBasicAuth
@@ -243,7 +245,8 @@ def heavy_audio_processing_pipeline(data: dict):
                 # A. Save raw transcript to Supabase
                 log_res = supabase.table("voice_logs").insert({
                     "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", # Using the working Prachi test UUID
-                    "raw_text": text_to_process, 
+                    "raw_text": text_to_process,
+                    "audio_url": s3_file_url, 
                     "processed": True
                 }).execute()
                 log_id = log_res.data[0]['id']
@@ -258,7 +261,21 @@ def heavy_audio_processing_pipeline(data: dict):
                 except Exception as e:
                     print(f"[ERROR] JSON Parse Failed: {e}")
                     symptoms = []
+# ==========================================
+                # 🚨 STEP 3: EMERGENCY ALERT CHECK 🚨
+                # ==========================================
+                CRITICAL_KEYWORDS = ["chest pain", "shortness of breath", "breathing difficulty", "suffocated", "dizzy", "unconscious", "heavy bleeding", "fainting", "sharp headache"]
 
+                if symptoms:
+                    for s in symptoms:
+                        tag_label = s.get('label', '').lower()
+                        if any(keyword in tag_label for keyword in CRITICAL_KEYWORDS):
+                            send_emergency_alert(
+                                patient_name=elder.name,
+                                symptom=tag_label,
+                                raw_message=text_to_process
+                            )
+                            break
                 # C. Save extracted tags to Supabase
                 if symptoms:
                     tags = [{"log_id": log_id, "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", "tag_type": s['type'], "label": s['label']} for s in symptoms]
@@ -266,7 +283,9 @@ def heavy_audio_processing_pipeline(data: dict):
                     
                 print(f"[SUCCESS] Saved {len(symptoms)} symptoms to AI Brain!")
             except Exception as e:
+                import traceback # <--- Add this
                 print(f"[ERROR] Supabase/Gemini insertion failed: {e}")
+                traceback.print_exc() # <--- Add this
         
         # 5. GENERATE SAFE TRACKER REPLY
         reply = f"Namaste {elder.name}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
@@ -276,6 +295,38 @@ def heavy_audio_processing_pipeline(data: dict):
         print(f"[CRITICAL BACKGROUND ERROR] {e}")
     finally:
         db.close() # Always close the session to prevent memory leaks
+
+def send_emergency_alert(patient_name, symptom, raw_message):
+    # Your credentials (store these securely in Render environment variables later)
+    SENDER_EMAIL = "your_sender_email@gmail.com" 
+    APP_PASSWORD = "your_16_letter_app_password"
+    RECEIVER_EMAIL = "your_personal_email@gmail.com" # Where you want to receive the alert
+
+    msg = EmailMessage()
+    msg.set_content(f"""
+    CRITICAL HEALTH ALERT
+    
+    Patient: {patient_name}
+    Flagged Symptom: {symptom}
+    
+    Original Message / Transcript: 
+    "{raw_message}"
+    
+    Action Required: Please contact them immediately. This is an automated Aarogya AI alert.
+    """)
+
+    msg['Subject'] = f"URGENT: Aarogya AI Alert - {patient_name}"
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = RECEIVER_EMAIL
+
+    try:
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(SENDER_EMAIL, APP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print(f"Emergency email sent for {symptom}!")
+    except Exception as e:
+        print(f"Failed to send email alert: {e}")
 
 # 6. FASTAPI WEBHOOK ROUTE
 @app.post("/whatsapp/incoming", dependencies=[Depends(verify_twilio_signature)])
