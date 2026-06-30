@@ -329,6 +329,12 @@ def heavy_audio_processing_pipeline(data: dict):
             if response:
                 try:
                     clean_text = response.text.replace('```json', '').replace('```', '').strip()
+                    
+                    # --- ADD THESE TWO LINES ---
+                    if not clean_text.startswith('['):
+                        clean_text = f"[{clean_text}]"
+                    # ---------------------------
+                    
                     print(f"DEBUG: Clean text received from Gemini: {clean_text}")
                     
                     symptoms = json.loads(clean_text)
