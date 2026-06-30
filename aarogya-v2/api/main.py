@@ -298,9 +298,9 @@ def heavy_audio_processing_pipeline(data: dict):
 
 def send_emergency_alert(patient_name, symptom, raw_message):
     # Your credentials (store these securely in Render environment variables later)
-    SENDER_EMAIL = "your_sender_email@gmail.com" 
-    APP_PASSWORD = "your_16_letter_app_password"
-    RECEIVER_EMAIL = "your_personal_email@gmail.com" # Where you want to receive the alert
+    SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
+    APP_PASSWORD = os.getenv("EMAIL_PASS")
+    RECEIVER_EMAIL = "rishitgautam8@gmail.com" # Where you want to receive the alert
 
     msg = EmailMessage()
     msg.set_content(f"""
