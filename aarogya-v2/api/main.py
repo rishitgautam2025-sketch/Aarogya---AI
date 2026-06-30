@@ -13,6 +13,8 @@ Endpoints:
 Run: uvicorn api.main:app --reload --port 8000
 """
 
+from urllib import response
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -57,6 +59,31 @@ import api.models
 from api.routers.auth import router as auth_router
 from api.routers.elder_monitor import router as elder_monitor_router
 
+def send_emergency_alert(patient_name, symptom, raw_message):
+    SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
+    APP_PASSWORD = os.getenv("EMAIL_PASS")
+    RECEIVER_EMAIL = "rishitgautam8@gmail.com"
+
+    msg = EmailMessage()
+    msg.set_content(f"""
+    CRITICAL HEALTH ALERT
+    Patient: {patient_name}
+    Flagged Symptom: {symptom}
+    Original Transcript: "{raw_message}"
+    """)
+
+    msg['Subject'] = f"URGENT: Aarogya AI Alert - {patient_name}"
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = RECEIVER_EMAIL
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(SENDER_EMAIL, APP_PASSWORD)
+            server.send_message(msg)
+        print("Emergency email sent successfully!")
+    except Exception as e:
+        print(f"Failed to send email alert: {e}")
+
 # ─────────────────────────────────────────────
 # NEW PHASE 2: SUPABASE & GEMINI INITIALIZATION
 # ─────────────────────────────────────────────
@@ -76,6 +103,38 @@ if google_api_key:
 else:
     gemini_model = None
 
+def send_emergency_alert(patient_name, symptom, raw_message):
+    # Your credentials (store these securely in Render environment variables later)
+    SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
+    APP_PASSWORD = os.getenv("EMAIL_PASS")
+    RECEIVER_EMAIL = "rishitgautam8@gmail.com" # Where you want to receive the alert
+
+    msg = EmailMessage()
+    msg.set_content(f"""
+    CRITICAL HEALTH ALERT
+    
+    Patient: {patient_name}
+    Flagged Symptom: {symptom}
+    
+    Original Message / Transcript: 
+    "{raw_message}"
+    
+    Action Required: Please contact them immediately. This is an automated Aarogya AI alert.
+    """)
+
+    msg['Subject'] = f"URGENT: Aarogya AI Alert - {patient_name}"
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = RECEIVER_EMAIL
+
+    try:
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(SENDER_EMAIL, APP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print(f"Emergency email sent for {symptom}!")
+    except Exception as e:
+        print(f"Failed to send email alert: {e}")
+        
 # ─────────────────────────────────────────────
 # APP SETUP & MIDDLEWARE (Cleaned & Unified)
 # ─────────────────────────────────────────────
@@ -255,12 +314,31 @@ def heavy_audio_processing_pipeline(data: dict):
                 prompt = f"""Extract symptoms from: "{text_to_process}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
                 response = gemini_model.generate_content(prompt)
                 
+            except Exception as e:
+                print(f"[ERROR] Gemini Failed: {e}")
+                symptoms = []
+
                 try:
                     clean_text = response.text.replace('```json', '').replace('```', '').strip()
                     symptoms = json.loads(clean_text)
+                    
+                    if symptoms:
+                        # 1. Get the first symptom label
+                        symptom_label = symptoms[0].get('label', 'General Symptom')
+                        
+                        # 2. Get the patient name
+                        p_name = getattr(elder, 'name', 'Unknown Patient')
+                        
+                        # 3. Call the email function
+                        send_emergency_alert(
+                            patient_name=p_name,
+                            symptom=symptom_label,
+                            raw_message=text_to_process
+                        )
                 except Exception as e:
                     print(f"[ERROR] JSON Parse Failed: {e}")
                     symptoms = []
+                
 # ==========================================
                 # 🚨 STEP 3: EMERGENCY ALERT CHECK 🚨
                 # ==========================================
@@ -295,38 +373,6 @@ def heavy_audio_processing_pipeline(data: dict):
         print(f"[CRITICAL BACKGROUND ERROR] {e}")
     finally:
         db.close() # Always close the session to prevent memory leaks
-
-def send_emergency_alert(patient_name, symptom, raw_message):
-    # Your credentials (store these securely in Render environment variables later)
-    SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
-    APP_PASSWORD = os.getenv("EMAIL_PASS")
-    RECEIVER_EMAIL = "rishitgautam8@gmail.com" # Where you want to receive the alert
-
-    msg = EmailMessage()
-    msg.set_content(f"""
-    CRITICAL HEALTH ALERT
-    
-    Patient: {patient_name}
-    Flagged Symptom: {symptom}
-    
-    Original Message / Transcript: 
-    "{raw_message}"
-    
-    Action Required: Please contact them immediately. This is an automated Aarogya AI alert.
-    """)
-
-    msg['Subject'] = f"URGENT: Aarogya AI Alert - {patient_name}"
-    msg['From'] = SENDER_EMAIL
-    msg['To'] = RECEIVER_EMAIL
-
-    try:
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(SENDER_EMAIL, APP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"Emergency email sent for {symptom}!")
-    except Exception as e:
-        print(f"Failed to send email alert: {e}")
 
 # 6. FASTAPI WEBHOOK ROUTE
 @app.post("/whatsapp/incoming", dependencies=[Depends(verify_twilio_signature)])
