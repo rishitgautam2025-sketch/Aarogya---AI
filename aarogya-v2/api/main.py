@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import json
-import os
 import traceback
 import uuid
 import io
@@ -27,8 +26,6 @@ import joblib
 import numpy as np
 import requests
 import boto3
-import smtplib
-from email.message import EmailMessage
 
 from groq import Groq
 from requests.auth import HTTPBasicAuth
@@ -59,10 +56,20 @@ import api.models
 from api.routers.auth import router as auth_router
 from api.routers.elder_monitor import router as elder_monitor_router
 
+import os
+import smtplib
+from email.message import EmailMessage
+
 def send_emergency_alert(patient_name, symptom, raw_message):
+    print("DEBUG: Entering send_emergency_alert function...")
     SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
     APP_PASSWORD = os.getenv("EMAIL_PASS")
     RECEIVER_EMAIL = "rishitgautam8@gmail.com"
+
+    # 🚨 CRITICAL CHECK: Did Render load the password?
+    if not APP_PASSWORD:
+        print("[ERROR] EMAIL_PASS environment variable is completely empty or missing!")
+        return
 
     msg = EmailMessage()
     msg.set_content(f"""
@@ -77,12 +84,14 @@ def send_emergency_alert(patient_name, symptom, raw_message):
     msg['To'] = RECEIVER_EMAIL
 
     try:
+        print(f"DEBUG: Connecting to SMTP server as {SENDER_EMAIL}...")
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(SENDER_EMAIL, APP_PASSWORD)
             server.send_message(msg)
-        print("Emergency email sent successfully!")
+        print("[SUCCESS] Emergency email dispatched securely!")
     except Exception as e:
-        print(f"Failed to send email alert: {e}")
+        # This will catch Google App Password rejections
+        print(f"[ERROR] Critical failure sending email: {e}")
 
 # ─────────────────────────────────────────────
 # NEW PHASE 2: SUPABASE & GEMINI INITIALIZATION
@@ -102,38 +111,6 @@ if google_api_key:
     print("[INFO] Gemini AI Brain online.")
 else:
     gemini_model = None
-
-def send_emergency_alert(patient_name, symptom, raw_message):
-    # Your credentials (store these securely in Render environment variables later)
-    SENDER_EMAIL = "aarogya.ai.alerts@gmail.com" 
-    APP_PASSWORD = os.getenv("EMAIL_PASS")
-    RECEIVER_EMAIL = "rishitgautam8@gmail.com" # Where you want to receive the alert
-
-    msg = EmailMessage()
-    msg.set_content(f"""
-    CRITICAL HEALTH ALERT
-    
-    Patient: {patient_name}
-    Flagged Symptom: {symptom}
-    
-    Original Message / Transcript: 
-    "{raw_message}"
-    
-    Action Required: Please contact them immediately. This is an automated Aarogya AI alert.
-    """)
-
-    msg['Subject'] = f"URGENT: Aarogya AI Alert - {patient_name}"
-    msg['From'] = SENDER_EMAIL
-    msg['To'] = RECEIVER_EMAIL
-
-    try:
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(SENDER_EMAIL, APP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"Emergency email sent for {symptom}!")
-    except Exception as e:
-        print(f"Failed to send email alert: {e}")
         
 # ─────────────────────────────────────────────
 # APP SETUP & MIDDLEWARE (Cleaned & Unified)
