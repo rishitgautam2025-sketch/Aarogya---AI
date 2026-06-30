@@ -251,6 +251,7 @@ async def verify_twilio_signature(request: Request):
 
 # 3. THE BACKGROUND WORKER
 def heavy_audio_processing_pipeline(data: dict):
+    print("DEBUG: Pipeline just started!")
     # We must create a fresh database session for the background task
     db = SessionLocal() 
     try:
@@ -298,12 +299,18 @@ def heavy_audio_processing_pipeline(data: dict):
                     print(f"[ERROR] Groq Failed: {e}")
                     text_to_process = "Audio transcription failed."
 
-        # 4. AI BRAIN PIPELINE: Gemini + Supabase
+# 4. AI BRAIN PIPELINE: Gemini + Supabase
         if supabase and gemini_model:
+            response = None  # Prevents NameError if Gemini fails
+            
+            # Safe fallback for s3_file_url if it wasn't defined in Step 3
+            if 's3_file_url' not in locals():
+                s3_file_url = None
+            
             try:
                 # A. Save raw transcript to Supabase
                 log_res = supabase.table("voice_logs").insert({
-                    "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", # Using the working Prachi test UUID
+                    "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", 
                     "raw_text": text_to_process,
                     "audio_url": s3_file_url, 
                     "processed": True
@@ -315,19 +322,28 @@ def heavy_audio_processing_pipeline(data: dict):
                 response = gemini_model.generate_content(prompt)
                 
             except Exception as e:
-                print(f"[ERROR] Gemini Failed: {e}")
+                print(f"[ERROR] Gemini or Database Logging Failed: {e}")
                 symptoms = []
 
+            # C. JSON Parsing & Email Alerting
+            if response:
                 try:
                     clean_text = response.text.replace('```json', '').replace('```', '').strip()
+                    print(f"DEBUG: Clean text received from Gemini: {clean_text}")
+                    
                     symptoms = json.loads(clean_text)
+                    print(f"DEBUG: Successfully parsed symptoms array: {symptoms}")
                     
                     if symptoms:
+                        print("DEBUG: Active symptoms detected. Initializing alert workflow...")
                         # 1. Get the first symptom label
                         symptom_label = symptoms[0].get('label', 'General Symptom')
                         
-                        # 2. Get the patient name
-                        p_name = getattr(elder, 'name', 'Unknown Patient')
+                        # 2. Crash-proof check for the patient name
+                        if 'elder' in locals() and elder:
+                            p_name = getattr(elder, 'name', 'Unknown Patient')
+                        else:
+                            p_name = 'Prachi (Test Patient)'  # Clean fallback for your active test uuid
                         
                         # 3. Call the email function
                         send_emergency_alert(
@@ -335,8 +351,11 @@ def heavy_audio_processing_pipeline(data: dict):
                             symptom=symptom_label,
                             raw_message=text_to_process
                         )
+                    else:
+                        print("DEBUG: Gemini returned an empty symptoms array. No email sent.")
+                        
                 except Exception as e:
-                    print(f"[ERROR] JSON Parse Failed: {e}")
+                    print(f"[ERROR] JSON Parse or Alert Dispatch Failed: {e}")
                     symptoms = []
                 
 # ==========================================
@@ -347,23 +366,18 @@ def heavy_audio_processing_pipeline(data: dict):
                 if symptoms:
                     for s in symptoms:
                         tag_label = s.get('label', '').lower()
-                        if any(keyword in tag_label for keyword in CRITICAL_KEYWORDS):
-                            send_emergency_alert(
-                                patient_name=elder.name,
-                                symptom=tag_label,
-                                raw_message=text_to_process
-                            )
-                            break
-                # C. Save extracted tags to Supabase
-                if symptoms:
-                    tags = [{"log_id": log_id, "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", "tag_type": s['type'], "label": s['label']} for s in symptoms]
-                    supabase.table("symptom_tags").insert(tags).execute()
-                    
-                print(f"[SUCCESS] Saved {len(symptoms)} symptoms to AI Brain!")
-            except Exception as e:
-                import traceback # <--- Add this
-                print(f"[ERROR] Supabase/Gemini insertion failed: {e}")
-                traceback.print_exc() # <--- Add this
+                        # C. Save extracted tags to Supabase
+        try:  # <--- THIS WAS MISSING
+            if symptoms:
+                tags = [{"log_id": log_id, "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", "tag": t.get("label")} for t in symptoms]
+                supabase.table("symptom_tags").insert(tags).execute()
+
+            print(f"[SUCCESS] Saved {len(symptoms)} symptoms to AI Brain!")
+            
+        except Exception as e:
+            import traceback 
+            print(f"[ERROR] Supabase/Gemini insertion failed: {e}")
+            traceback.print_exc()
         
         # 5. GENERATE SAFE TRACKER REPLY
         reply = f"Namaste {elder.name}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
