@@ -36,6 +36,9 @@ class Elder(Base):
     baseline_bp_diastolic = Column(Float, nullable=True)
     phone = Column(String(20), unique=True, index=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    chronic_conditions = Column(JSON, default=list)
+    custom_triggers = Column(JSON, default=list)
+    last_alert_sent = Column(DateTime(timezone=True), nullable=True)
     
     # This is the ONLY new line you need right now!
     preferred_language = Column(String, default="hindi") 

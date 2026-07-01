@@ -12,9 +12,6 @@ Endpoints:
 
 Run: uvicorn api.main:app --reload --port 8000
 """
-
-from urllib import response
-
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -32,6 +29,10 @@ from requests.auth import HTTPBasicAuth
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timezone
+from api.notifications import trigger_emergency_call
+from api.routers import reports, onboarding
+
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,7 +48,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 # --- NEW PHASE 2 IMPORTS ---
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai
 
 # Local imports
 from api.scheduler import start_scheduler
@@ -55,11 +56,10 @@ from api.database import Base, engine, get_db, SessionLocal
 import api.models
 from api.routers.auth import router as auth_router
 from api.routers.elder_monitor import router as elder_monitor_router
+from api.routers import reports
+from typing import List, Optional
 
 import os
-import smtplib
-from email.message import EmailMessage
-
 def send_emergency_alert(patient_name, symptom, raw_message):
     print("DEBUG: Entering send_emergency_alert function via Resend HTTP API...")
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
@@ -116,8 +116,7 @@ else:
 
 google_api_key = os.getenv("GOOGLE_API_KEY")
 if google_api_key:
-    genai.configure(api_key=google_api_key)
-    gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+    client = genai.Client(api_key=google_api_key)
     print("[INFO] Gemini AI Brain online.")
 else:
     gemini_model = None
@@ -142,9 +141,9 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 # 3. Add CORS Middleware so React can access the API and the media files
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=False, 
-    allow_methods=["*"],
+    allow_origins=["http://localhost:5173"], # Allows your React frontend
+    allow_credentials=True,
+    allow_methods=["*"], # Allows POST, GET, etc.
     allow_headers=["*"],
 )
 
@@ -165,6 +164,8 @@ async def debug_exception_handler(request: Request, exc: Exception):
 # Include routers
 app.include_router(auth_router)
 app.include_router(elder_monitor_router)
+app.include_router(reports.router)
+app.include_router(onboarding.router)
 
 # ─────────────────────────────────────────────
 # LOAD MODEL ARTIFACTS
@@ -253,72 +254,105 @@ def heavy_audio_processing_pipeline(data: dict):
 
         text_to_process = body.lower()
         s3_file_url = None
+        media_content_type = data.get("MediaContentType0", "")
+        vision_part = None # To hold the image data for Gemini
 
         if media_url_0:
-            audio_response = requests.get(
+            media_response = requests.get(
                 media_url_0,
                 auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
             )
             
-            if audio_response.status_code in [200, 201]:
-                audio_bytes = audio_response.content
-                file_name = f"{elder.id}_{uuid.uuid4().hex}.ogg"
+            if media_response.status_code in [200, 201]:
+                media_bytes = media_response.content
                 
-                # S3 UPLOAD: Fixes the In-Memory RAM crash risk
+                # 1. ROUTING: Check if it is an image or audio
+                if media_content_type.startswith("image/"):
+                    file_extension = media_content_type.split("/")[-1]
+                    file_name = f"{elder.id}_img_{uuid.uuid4().hex}.{file_extension}"
+                    
+                    # Prepare the raw image bytes for Gemini Vision
+                    vision_part = {
+                        "mime_type": media_content_type,
+                        "data": media_bytes
+                    }
+                    
+                    # If they just sent a photo without typing a caption, give the AI some default context
+                    if not text_to_process:
+                        text_to_process = "User sent a photo for medical evaluation."
+                        
+                else: 
+                    # Default to Audio processing (Groq Whisper)
+                    file_name = f"{elder.id}_audio_{uuid.uuid4().hex}.ogg"
+                    try:
+                        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+                        transcript = groq_client.audio.translations.create(
+                            model="whisper-large-v3",
+                            file=("voice_note.ogg", media_bytes)
+                        )
+                        text_to_process = transcript.text
+                    except Exception as e:
+                        print(f"[ERROR] Groq Failed: {e}")
+                        text_to_process = "Audio transcription failed."
+                
+                # 2. S3 UPLOAD (Works identically for both audio and images!)
                 if s3_client:
                     s3_client.put_object(
                         Bucket=AWS_BUCKET_NAME,
                         Key=file_name,
-                        Body=audio_bytes,
-                        ContentType="audio/ogg"
+                        Body=media_bytes,
+                        ContentType=media_content_type or "application/octet-stream"
                     )
                     s3_file_url = f"https://{AWS_BUCKET_NAME}.s3.ap-south-1.amazonaws.com/{file_name}"
-                
-                # GROQ TRANSLATION
-                try:
-                    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-                    transcript = groq_client.audio.translations.create(
-                        model="whisper-large-v3",
-                        file=("voice_note.ogg", audio_bytes)
-                    )
-                    text_to_process = transcript.text
-                except Exception as e:
-                    print(f"[ERROR] Groq Failed: {e}")
-                    text_to_process = "Audio transcription failed."
 
 # 4. AI BRAIN PIPELINE: Gemini + Supabase
         if supabase and gemini_model:
-            response = None  # Prevents NameError if Gemini fails
+            response = None 
             
-            # Safe fallback for s3_file_url if it wasn't defined in Step 3
             if 's3_file_url' not in locals():
                 s3_file_url = None
             
             try:
-                # A. Save raw transcript to Supabase
+                # A. Save raw transcript/caption to Supabase
                 log_res = supabase.table("voice_logs").insert({
-                    "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", 
+                    "patient_id": str(elder.id), # <--- FIXED THIS
                     "raw_text": text_to_process,
                     "audio_url": s3_file_url, 
                     "processed": True
                 }).execute()
                 log_id = log_res.data[0]['id']
 
-                # B. Ask Gemini to extract symptoms dynamically using Patient History
-                # Fetch medical history safely, defaulting to a blank state if it doesn't exist yet
-                med_history = getattr(elder, 'medical_history', 'No prior medical history provided.') if elder else 'No prior medical history provided.'
+                # Fetch smart onboarding structured attributes safely from your updated Elder model
+                patient_conditions = getattr(elder, 'chronic_conditions', []) if elder else []
+                custom_triggers = getattr(elder, 'custom_triggers', []) if elder else []
                 
-                prompt = f"""You are a medical triage AI.
-                Patient Profile: {med_history}
-                Transcript: "{text_to_process}"
+                # The unbreakable baseline safety net 
+                universal_red_flags = [
+                    "chest pain", "shortness of breath", "severe breathing difficulty", 
+                    "unconscious", "heavy bleeding", "sudden numbness", "choking", "fainting"
+                ]
+                
+                prompt = f"""You are a medical triage AI routing notifications for a caretaker.
+                
+                Patient Profile:
+                - Chronic Conditions: {', '.join(patient_conditions) if patient_conditions else 'None reported'}
+                - Caretaker's Custom Alert Triggers: {', '.join(custom_triggers) if custom_triggers else 'None set'}
+                
+                Universal Red Flags (Always Critical): {', '.join(universal_red_flags)}
+                
+                Transcript/Context: "{text_to_process}"
                 
                 Task: 
-                1. Extract symptoms. Categorize as NEW SYMPTOM, REPEATED, or WORSENING.
-                2. Analyze these symptoms against the Patient Profile. If the symptoms pose a severe or immediate risk based on their specific history, set "is_emergency" to true.
+                1. Extract reported symptoms from the text AND visual findings from the image (if provided). Categorize as NEW SYMPTOM, REPEATED, or WORSENING.
+                2. Evaluate urgency: Set "is_emergency" to true ONLY IF an extracted symptom or visual marker directly matches, strongly correlates, or worsens a risk related to the Universal Red Flags OR the Caretaker's Custom Alert Triggers.
                 
                 Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean). Do not use markdown."""
                 
-                response = gemini_model.generate_content(prompt)
+                # B. Conditionally pass the image data to Gemini if it exists
+                if vision_part:
+                    response = gemini_model.generate_content([prompt, vision_part])
+                else:
+                    response = gemini_model.generate_content(prompt)
                 
             except Exception as e:
                 print(f"[ERROR] Gemini or Database Logging Failed: {e}")
@@ -335,9 +369,46 @@ def heavy_audio_processing_pipeline(data: dict):
                     print(f"DEBUG: Clean text received from Gemini: {clean_text}")
                     symptoms = json.loads(clean_text)
                     print(f"DEBUG: Successfully parsed symptoms array: {symptoms}")
+                    
+                    # --- NEW: EMERGENCY TELEPHONY ROUTING ---
+                    for item in symptoms:
+                        if item.get("is_emergency") is True:
+                            current_time = datetime.now(timezone.utc)
+                            
+                            # Safety check: Prevent spamming calls if an alert went out recently
+                            last_alert = getattr(elder, 'last_alert_sent', None)
+                            if last_alert:
+                                # Ensure last_alert is timezone-aware for accurate comparison
+                                if last_alert.tzinfo is None:
+                                    last_alert = last_alert.replace(tzinfo=timezone.utc)
+                                    
+                                time_elapsed = current_time - last_alert
+                                if time_elapsed.total_seconds() < 900: # 15 minutes = 900 seconds
+                                    print(f"[INFO] Emergency detected but suppressed. Last call was {time_elapsed.total_seconds() / 60:.1f} minutes ago.")
+                                    break
+
+                            # Fetch the caregiver's details from the related database model
+                            # Replace with your actual model relationship attributes
+                            caregiver_phone = getattr(elder, 'caregiver_phone', None) 
+                            
+                            if caregiver_phone:
+                                # Dispatch the phone call
+                                trigger_emergency_call(
+                                    to_phone=caregiver_phone,
+                                    patient_name=getattr(elder, 'name', 'Patient'),
+                                    symptom_label=item.get('label', 'Unspecified change'),
+                                    reasoning=item.get('reasoning', 'Trigger condition met.')
+                                )
+                                
+                                # Update the database timestamp to reset the 15-minute window
+                                supabase.table("elders").update({
+                                    "last_alert_sent": current_time.isoformat()
+                                }).eq("id", getattr(elder, 'id')).execute()
+                                
+                                break # Trigger exactly one call per triage cycle
                         
                 except Exception as e:
-                    print(f"[ERROR] JSON Parse Failed: {e}")
+                    print(f"[ERROR] JSON Parse or Telephony Dispatch Failed: {e}")
                     symptoms = []
                 
                 # ==========================================
@@ -355,7 +426,7 @@ def heavy_audio_processing_pipeline(data: dict):
                             if 'elder' in locals() and elder:
                                 p_name = getattr(elder, 'name', 'Unknown Patient')
                             else:
-                                p_name = 'Prachi (Test Patient)'
+                                p_name = getattr(elder, 'name', 'Unknown Patient')
                             
                             # Trigger the emergency email dispatch instantly!
                             send_emergency_alert(
@@ -374,7 +445,7 @@ def heavy_audio_processing_pipeline(data: dict):
                 tags = [
                     {
                         "log_id": log_id, 
-                        "patient_id": "0ef65eae-914e-47f3-b9ad-5cb9136fa289", 
+                        "patient_id": str(elder.id), # <--- FIXED THIS 
                         "tag_type": t.get("type", "NEW SYMPTOM"), 
                         "label": t.get("label", "General Symptom")
                     } 
@@ -497,10 +568,13 @@ def get_dashboard_data(elder_id: int, db: Session = Depends(get_db)):
         "notes": formatted_notes
     }
     
+from typing import List, Optional
+
 class ElderCreate(BaseModel):
     name: str
     phone: str
-    medical_history: Optional[str] = "No prior medical history provided." # Added this for future-proofing
+    chronic_conditions: List[str] = []
+    custom_triggers: List[str] = []
 
 @app.post("/api/elders")
 def create_elder(elder_in: ElderCreate, db: Session = Depends(get_db)):
@@ -510,13 +584,15 @@ def create_elder(elder_in: ElderCreate, db: Session = Depends(get_db)):
         db.add(caregiver)
         db.commit()
 
-    # NOTE: You will need to add a `medical_history` column to your api.models.Elder SQLAlchemy model!
     new_elder = api.models.Elder(
         name=elder_in.name,
         phone=elder_in.phone,
         age=65, 
         city="Unknown",
-        caregiver_id=caregiver.id
+        caregiver_id=caregiver.id,
+        # Ensure your SQLAlchemy api.models.Elder has JSON columns for these!
+        chronic_conditions=elder_in.chronic_conditions,
+        custom_triggers=elder_in.custom_triggers
     )
     db.add(new_elder)
     db.commit()
@@ -819,3 +895,28 @@ def generate_sql():
     sql += "CREATE TABLE IF NOT EXISTS symptom_tags (\n  id SERIAL PRIMARY KEY,\n  log_id INTEGER,\n  patient_id VARCHAR,\n  tag_type VARCHAR,\n  label VARCHAR,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n"
     
     return PlainTextResponse(content=sql)
+
+# api/identity_engine.py
+
+def get_patient_context(sender_phone: str):
+    """
+    Looks up a patient record based on their WhatsApp number.
+    Returns the full profile if found, otherwise None.
+    """
+    from api.main import supabase
+    
+    # 1. Clean the phone number (remove spaces/dashes if necessary)
+    clean_phone = sender_phone.strip()
+    
+    # 2. Query the database
+    response = supabase.table("elders") \
+        .select("*") \
+        .eq("phone", clean_phone) \
+        .single() \
+        .execute()
+    
+    # 3. If no patient exists with this phone number, return None
+    if not response.data:
+        return None
+        
+    return response.data
