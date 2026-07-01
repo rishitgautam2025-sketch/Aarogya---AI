@@ -101,6 +101,7 @@ def send_emergency_alert(patient_name, symptom, raw_message):
             
     except Exception as e:
         print(f"[ERROR] Critical failure sending email via HTTP: {e}")
+        
 
 # ─────────────────────────────────────────────
 # NEW PHASE 2: SUPABASE & GEMINI INITIALIZATION
@@ -303,46 +304,52 @@ def heavy_audio_processing_pipeline(data: dict):
                 }).execute()
                 log_id = log_res.data[0]['id']
 
-                # B. Ask Gemini to extract symptoms
-                prompt = f"""Extract symptoms from: "{text_to_process}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
+                # B. Ask Gemini to extract symptoms dynamically using Patient History
+                # Fetch medical history safely, defaulting to a blank state if it doesn't exist yet
+                med_history = getattr(elder, 'medical_history', 'No prior medical history provided.') if elder else 'No prior medical history provided.'
+                
+                prompt = f"""You are a medical triage AI.
+                Patient Profile: {med_history}
+                Transcript: "{text_to_process}"
+                
+                Task: 
+                1. Extract symptoms. Categorize as NEW SYMPTOM, REPEATED, or WORSENING.
+                2. Analyze these symptoms against the Patient Profile. If the symptoms pose a severe or immediate risk based on their specific history, set "is_emergency" to true.
+                
+                Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean). Do not use markdown."""
+                
                 response = gemini_model.generate_content(prompt)
                 
             except Exception as e:
                 print(f"[ERROR] Gemini or Database Logging Failed: {e}")
                 symptoms = []
 
-            # C. JSON Parsing & Email Alerting
+            # C. JSON Parsing
             if response:
                 try:
                     clean_text = response.text.replace('```json', '').replace('```', '').strip()
                     
-                    # --- ADD THESE TWO LINES ---
                     if not clean_text.startswith('['):
                         clean_text = f"[{clean_text}]"
-                    # ---------------------------
                     
                     print(f"DEBUG: Clean text received from Gemini: {clean_text}")
-                    
                     symptoms = json.loads(clean_text)
                     print(f"DEBUG: Successfully parsed symptoms array: {symptoms}")
                         
                 except Exception as e:
-                    print(f"[ERROR] JSON Parse or Alert Dispatch Failed: {e}")
+                    print(f"[ERROR] JSON Parse Failed: {e}")
                     symptoms = []
                 
-# ==========================================
-                # 🚨 STEP 3: EMERGENCY ALERT CHECK 🚨
                 # ==========================================
-                CRITICAL_KEYWORDS = ["chest pain", "shortness of breath", "breathing difficulty", "suffocated", "dizzy", "unconscious", "heavy bleeding", "fainting", "sharp headache"]
-
+                # 🚨 STEP 3: DYNAMIC EMERGENCY ALERT CHECK 🚨
+                # ==========================================
                 if symptoms:
-                    print("DEBUG: Checking extracted symptoms against critical keywords...")
+                    print("DEBUG: Checking AI-assessed emergency flags...")
                     for s in symptoms:
-                        tag_label = s.get('label', '').lower()
-                        
-                        # Check if any critical keyword matches or is inside the symptom label
-                        if any(keyword in tag_label for keyword in CRITICAL_KEYWORDS):
-                            print(f"🚨 CRITICAL SYMPTOM DETECTED: '{tag_label}'. Triggering alert workflow...")
+                        # Check the boolean flag set by Gemini instead of static keywords
+                        if s.get('is_emergency') is True:
+                            tag_label = s.get('label', 'Unknown Critical Symptom')
+                            print(f"🚨 CRITICAL SYMPTOM DETECTED by AI: '{tag_label}'. Triggering alert workflow...")
                             
                             # Crash-proof check for the patient name
                             if 'elder' in locals() and elder:
@@ -353,16 +360,17 @@ def heavy_audio_processing_pipeline(data: dict):
                             # Trigger the emergency email dispatch instantly!
                             send_emergency_alert(
                                 patient_name=p_name,
-                                symptom=s.get('label', 'General Symptom'),
+                                symptom=tag_label,
                                 raw_message=text_to_process
                             )
-                            break # Alert sent, no need to send duplicate emails if multiple match
+                            break # Alert sent, no need to send duplicate emails
 
         # ==========================================
         # C. Save extracted tags to Supabase
         # ==========================================
         try:  
             if symptoms:
+                # We strip out the 'is_emergency' key here so we don't break your existing database schema!
                 tags = [
                     {
                         "log_id": log_id, 
@@ -382,7 +390,6 @@ def heavy_audio_processing_pipeline(data: dict):
             traceback.print_exc()
         
         # 5. GENERATE SAFE TRACKER REPLY
-        # Safe fallback check for elder name to prevent crashes here too
         p_name_whatsapp = elder.name if ('elder' in locals() and elder) else "Prachi"
         reply = f"Namaste {p_name_whatsapp}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
         send_whatsapp(from_num, reply)
@@ -422,17 +429,29 @@ async def process_voice_log(note: VoiceNote):
         }).execute()
         log_id = log_res.data[0]['id']
 
-        prompt = f"""Extract symptoms from: "{note.raw_text}". Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Return ONLY a raw JSON array of objects with 'type' and 'label' keys. Do not use markdown."""
+        # Aligned prompt to match the dynamic medical history setup
+        prompt = f"""You are a medical triage AI.
+        Transcript: "{note.raw_text}"
+        
+        Task: 
+        1. Extract symptoms. Categorize as NEW SYMPTOM, REPEATED, or WORSENING.
+        2. Analyze these symptoms. If they pose a severe or immediate risk, set "is_emergency" to true.
+        
+        Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean). Do not use markdown."""
+        
         response = gemini_model.generate_content(prompt)
         try:
             clean_text = response.text.replace('```json', '').replace('```', '').strip()
+            if not clean_text.startswith('['):
+                clean_text = f"[{clean_text}]"
             symptoms = json.loads(clean_text)
         except Exception as e:
             print(f"[ERROR] JSON Parse Failed: {e}")
             symptoms = []
 
         if symptoms:
-            tags = [{"log_id": log_id, "patient_id": note.patient_id, "tag_type": s['type'], "label": s['label']} for s in symptoms]
+            # Safely dropping 'is_emergency' to match the database schema
+            tags = [{"log_id": log_id, "patient_id": note.patient_id, "tag_type": s.get('type', 'NEW SYMPTOM'), "label": s.get('label', 'Symptom')} for s in symptoms]
             supabase.table("symptom_tags").insert(tags).execute()
 
         return {"status": "success", "log_id": log_id, "extracted_symptoms": symptoms}
@@ -481,6 +500,7 @@ def get_dashboard_data(elder_id: int, db: Session = Depends(get_db)):
 class ElderCreate(BaseModel):
     name: str
     phone: str
+    medical_history: Optional[str] = "No prior medical history provided." # Added this for future-proofing
 
 @app.post("/api/elders")
 def create_elder(elder_in: ElderCreate, db: Session = Depends(get_db)):
@@ -490,6 +510,7 @@ def create_elder(elder_in: ElderCreate, db: Session = Depends(get_db)):
         db.add(caregiver)
         db.commit()
 
+    # NOTE: You will need to add a `medical_history` column to your api.models.Elder SQLAlchemy model!
     new_elder = api.models.Elder(
         name=elder_in.name,
         phone=elder_in.phone,
