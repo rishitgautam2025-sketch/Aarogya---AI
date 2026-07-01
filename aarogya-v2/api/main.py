@@ -48,7 +48,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 # --- NEW PHASE 2 IMPORTS ---
 from supabase import create_client, Client
-from google import genai
+import google.generativeai as genai
 
 # Local imports
 from api.scheduler import start_scheduler
