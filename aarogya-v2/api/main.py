@@ -325,26 +325,6 @@ def heavy_audio_processing_pipeline(data: dict):
                     
                     symptoms = json.loads(clean_text)
                     print(f"DEBUG: Successfully parsed symptoms array: {symptoms}")
-                    
-                    if symptoms:
-                        print("DEBUG: Active symptoms detected. Initializing alert workflow...")
-                        # 1. Get the first symptom label
-                        symptom_label = symptoms[0].get('label', 'General Symptom')
-                        
-                        # 2. Crash-proof check for the patient name
-                        if 'elder' in locals() and elder:
-                            p_name = getattr(elder, 'name', 'Unknown Patient')
-                        else:
-                            p_name = 'Prachi (Test Patient)'  # Clean fallback for your active test uuid
-                        
-                        # 3. Call the email function
-                        send_emergency_alert(
-                            patient_name=p_name,
-                            symptom=symptom_label,
-                            raw_message=text_to_process
-                        )
-                    else:
-                        print("DEBUG: Gemini returned an empty symptoms array. No email sent.")
                         
                 except Exception as e:
                     print(f"[ERROR] JSON Parse or Alert Dispatch Failed: {e}")
