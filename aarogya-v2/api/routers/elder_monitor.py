@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 
 import openai
-import google.generativeai as genai
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from requests.auth import HTTPBasicAuth
@@ -27,12 +26,12 @@ from api.models import Elder, User, HealthLog, Alert
 from api.auth import get_current_active_user, get_current_user
 from api.routers.whatsapp import send_whatsapp
 from api.storage import upload_audio
+from api.config import gemini_client, AAROGYA_MODEL
 
 load_dotenv()
 
 # Setup AI
 openai.api_key = os.getenv("OPENAI_API_KEY")
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
@@ -355,13 +354,16 @@ async def whatsapp_webhook(
     ai_summary = "No message content to analyze."
     if message_text:
         try:
-            gemini_model = genai.GenerativeModel("gemini-1.5-flash")
             prompt = (
                 f"A patient sent this health update: '{message_text}'. "
                 "Extract any symptoms mentioned and provide a brief 1-2 sentence "
                 "clinical summary. Be concise and factual."
             )
-            ai_summary = gemini_model.generate_content(prompt).text
+            response = gemini_client.models.generate_content(
+                model=AAROGYA_MODEL,
+                contents=prompt
+            )
+            ai_summary = response.text
         except Exception as e:
             print(f"[WARN] Gemini analysis failed: {e}")
             ai_summary = "AI analysis unavailable. Log saved."
