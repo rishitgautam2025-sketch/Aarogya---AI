@@ -22,7 +22,7 @@ except Exception as e:
     print(f"[DEBUG] Could not list models: {e}")
 
 # Use the 'models/' prefix which is safer for SDK routing
-gemini_model = genai.GenerativeModel('models/gemini-1.5-flash')
+gemini_model = genai.GenerativeModel('gemini-1.5-flash')
 
 # Initialize AWS S3 (Mumbai Region)
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
