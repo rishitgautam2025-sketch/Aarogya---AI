@@ -16,6 +16,6 @@ bcrypt
 email-validator
 python-multipart
 sqlalchemy
-google-generativeai
+google-genai>=2.0.0
 apscheduler
 boto3
