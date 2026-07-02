@@ -149,10 +149,18 @@ def heavy_audio_processing_pipeline(data: dict):
                         last_alert = elder.last_alert_sent
                         
                         if last_alert:
-                            if last_alert.tzinfo is None:
-                                last_alert = last_alert.replace(tzinfo=timezone.utc)
-                            if (current_time - last_alert).total_seconds() < 900:
-                                break
+                            # Safely convert string from Supabase into a true Python datetime object
+                            if isinstance(last_alert, str):
+                                try:
+                                    last_alert = datetime.fromisoformat(last_alert.replace('Z', '+00:00'))
+                                except Exception:
+                                    last_alert = None
+                            
+                            if last_alert:
+                                if last_alert.tzinfo is None:
+                                    last_alert = last_alert.replace(tzinfo=timezone.utc)
+                                if (current_time - last_alert).total_seconds() < 900:
+                                    break
                         
                         if elder.caregiver_phone:
                             trigger_emergency_call(elder.caregiver_phone, elder.name, item.get('label', 'Emergency'), item.get('reasoning', 'Condition met.'))
