@@ -1,18 +1,18 @@
 import os
 import boto3
 from supabase import create_client
-from google import genai
+from google import genai  # Only use the new SDK
 
 # Initialize Supabase
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
-# Initialize NEW Gemini Client (Modern SDK)
+# Initialize NEW Gemini Client
 gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-AAROGYA_MODEL = "gemini-3.5-flash"
+AAROGYA_MODEL = "gemini-1.5-flash"
 
-# Initialize AWS S3 (Mumbai Region)
+# Initialize AWS S3
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
 AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME", "aarogya-voice-logs")
