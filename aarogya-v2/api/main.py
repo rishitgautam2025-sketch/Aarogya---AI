@@ -1,6 +1,7 @@
 """
 Aarogya AI V2 — FastAPI REST API
 """
+from click import prompt
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -26,6 +27,7 @@ from sqlalchemy.dialects import postgresql
 from api.database import engine, get_db
 import api.models
 from api.scheduler import start_scheduler
+# Change this import
 from api.config import supabase, gemini_client, AAROGYA_MODEL
 
 # Routers
@@ -119,33 +121,44 @@ async def process_voice_log(note: VoiceNote):
         raise HTTPException(status_code=500, detail="Supabase/Gemini offline.")
         
     try:
+        # 1. Insert Log to Supabase
         log_res = supabase.table("voice_logs").insert({
-            "patient_id": note.patient_id, "raw_text": note.raw_text, "processed": True
+            "patient_id": note.patient_id, 
+            "raw_text": note.raw_text, 
+            "processed": True
         }).execute()
+        
+        # We ensure log_id is defined here
         log_id = log_res.data[0]['id']
 
+        # 2. Call Gemini
         prompt = f"""You are a medical triage AI.
         Transcript: "{note.raw_text}"
         Task: Extract symptoms. Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Analyze severity and set "is_emergency" to true if highly critical.
         Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean)."""
         
         response = gemini_client.models.generate_content(
-    model=AAROGYA_MODEL,
-    contents=prompt
-)
+            model=AAROGYA_MODEL,
+            contents=prompt
+        )
+
+        # 3. Parse Symptoms
         try:
             clean_text = response.text.replace('```json', '').replace('```', '').strip()
             if not clean_text.startswith('['): clean_text = f"[{clean_text}]"
             symptoms = json.loads(clean_text)
-        except Exception as e:
+        except Exception:
             symptoms = []
 
+        # 4. Save Symptoms if found
         if symptoms:
             tags = [{"log_id": log_id, "patient_id": note.patient_id, "tag_type": s.get('type', 'NEW SYMPTOM'), "label": s.get('label', 'Symptom')} for s in symptoms]
             supabase.table("symptom_tags").insert(tags).execute()
 
         return {"status": "success", "log_id": log_id, "extracted_symptoms": symptoms}
+
     except Exception as e:
+        # This catches any errors and ensures the code is structurally valid
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─────────────────────────────────────────────

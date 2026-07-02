@@ -1,7 +1,7 @@
 import os
 import boto3
 from supabase import create_client
-from google import genai  # Only use the new SDK
+from google import genai
 
 # Initialize Supabase
 supabase_url = os.getenv("SUPABASE_URL")
