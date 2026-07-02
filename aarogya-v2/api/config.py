@@ -1,28 +1,16 @@
 import os
 import boto3
 from supabase import create_client
-import google.generativeai as genai
+from google import genai
 
 # Initialize Supabase
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
-# Initialize Gemini
-# Initialize Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-# DIAGNOSTIC: List available models to find the correct path
-try:
-    print("[DEBUG] Fetching available models from Google API...")
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            print(f"[DEBUG] SUPPORTED MODEL NAME: {m.name}")
-except Exception as e:
-    print(f"[DEBUG] Could not list models: {e}")
-
-# Use the 'models/' prefix which is safer for SDK routing
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+# Initialize NEW Gemini Client (Modern SDK)
+gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+AAROGYA_MODEL = "gemini-3.5-flash"
 
 # Initialize AWS S3 (Mumbai Region)
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")

@@ -10,9 +10,10 @@ from fastapi import APIRouter, Request, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from twilio.rest import Client as TwilioClient
 from requests.auth import HTTPBasicAuth
+from google.genai import types
 
-# Architecture Imports
-from api.config import s3_client, AWS_BUCKET_NAME, supabase, gemini_model
+# Architecture Imports (Updated to new Gemini Client)
+from api.config import s3_client, AWS_BUCKET_NAME, supabase, gemini_client, AAROGYA_MODEL
 from api.database import SessionLocal, get_db
 import api.models
 from api.notifications import trigger_emergency_call
@@ -47,14 +48,12 @@ def heavy_audio_processing_pipeline(data: dict):
         media_url_0 = data.get("MediaUrl0") 
         media_content_type = data.get("MediaContentType0", "")
         
-        # 1. Fetch the patient from Supabase Cloud instead of local SQLite
         elder_data = get_patient_context(from_num)
         
         if not elder_data:
             send_whatsapp(from_num, "Namaste! Aapka number register nahi hai.")
             return
             
-        # 2. Convert the Supabase dictionary into an object so the rest of your code works perfectly
         class PatientObject:
             def __init__(self, d):
                 self.__dict__.update(d)
@@ -64,14 +63,12 @@ def heavy_audio_processing_pipeline(data: dict):
         s3_file_url = None
         vision_part = None 
 
-        # --- A. HANDLE MEDIA ---
         if media_url_0:
             media_response = requests.get(media_url_0, auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None)
             
             if media_response.status_code in [200, 201]:
                 media_bytes = media_response.content
                 
-                # Image Routing
                 if media_content_type.startswith("image/"):
                     file_extension = media_content_type.split("/")[-1]
                     file_name = f"{elder.id}_img_{uuid.uuid4().hex}.{file_extension}"
@@ -79,7 +76,6 @@ def heavy_audio_processing_pipeline(data: dict):
                     if not text_to_process:
                         text_to_process = "User sent a photo for medical evaluation."
                         
-                # Audio Routing (Groq Whisper)
                 else: 
                     file_name = f"{elder.id}_audio_{uuid.uuid4().hex}.ogg"
                     try:
@@ -92,7 +88,6 @@ def heavy_audio_processing_pipeline(data: dict):
                         print(f"[ERROR] Groq Failed: {e}")
                         text_to_process = "Audio transcription failed."
                 
-                # S3 Upload
                 if s3_client:
                     s3_client.put_object(
                         Bucket=AWS_BUCKET_NAME,
@@ -102,13 +97,11 @@ def heavy_audio_processing_pipeline(data: dict):
                     )
                     s3_file_url = f"https://{AWS_BUCKET_NAME}.s3.ap-south-1.amazonaws.com/{file_name}"
 
-        # --- B. AI INTELLIGENCE ---
         symptoms = []
         is_emergency = False
         
-        if supabase and gemini_model:
+        if supabase and gemini_client:
             try:
-                # 1. Save Raw Log
                 log_res = supabase.table("voice_logs").insert({
                     "patient_id": str(elder.id), 
                     "raw_text": text_to_process,
@@ -117,7 +110,6 @@ def heavy_audio_processing_pipeline(data: dict):
                 }).execute()
                 log_id = log_res.data[0]['id']
 
-                # 2. Context-Aware Prompt
                 patient_conditions = elder.chronic_conditions if elder.chronic_conditions else []
                 custom_triggers = elder.custom_triggers if elder.custom_triggers else []
                 universal_red_flags = ["chest pain", "shortness of breath", "severe breathing difficulty", "unconscious", "heavy bleeding", "sudden numbness", "choking", "fainting"]
@@ -133,10 +125,19 @@ def heavy_audio_processing_pipeline(data: dict):
                 Task: Extract reported symptoms. Evaluate urgency. Set "is_emergency" to true ONLY IF an extracted symptom directly matches or worsens a risk related to the Universal Red Flags OR the Custom Alert Triggers.
                 Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean). Do not use markdown."""
                 
-                # 3. Gemini Generation
-                response = gemini_model.generate_content([prompt, vision_part]) if vision_part else gemini_model.generate_content(prompt)
+                # --- NEW MODERN SDK CALL ---
+                if vision_part:
+                    image_part = types.Part.from_bytes(data=vision_part["data"], mime_type=vision_part["mime_type"])
+                    response = gemini_client.models.generate_content(
+                        model=AAROGYA_MODEL,
+                        contents=[prompt, image_part]
+                    )
+                else:
+                    response = gemini_client.models.generate_content(
+                        model=AAROGYA_MODEL,
+                        contents=prompt
+                    )
                 
-                # 4. JSON Parse & Emergency Telephony Routing
                 clean_text = response.text.replace('```json', '').replace('```', '').strip()
                 if not clean_text.startswith('['): clean_text = f"[{clean_text}]"
                 symptoms = json.loads(clean_text)
@@ -151,10 +152,8 @@ def heavy_audio_processing_pipeline(data: dict):
                             if last_alert.tzinfo is None:
                                 last_alert = last_alert.replace(tzinfo=timezone.utc)
                             if (current_time - last_alert).total_seconds() < 900:
-                                print("[INFO] Emergency call suppressed (15 min cooldown).")
                                 break
                         
-                        # Trigger Call
                         if elder.caregiver_phone:
                             trigger_emergency_call(elder.caregiver_phone, elder.name, item.get('label', 'Emergency'), item.get('reasoning', 'Condition met.'))
                             supabase.table("elders").update({"last_alert_sent": current_time.isoformat()}).eq("id", elder.id).execute()
@@ -163,7 +162,6 @@ def heavy_audio_processing_pipeline(data: dict):
             except Exception as e:
                 print(f"[ERROR] AI Logic Failed: {e}")
 
-        # --- C. EMAIL ALERTS & DATABASE LOGGING ---
         if is_emergency:
             send_emergency_alert(patient_name=elder.name, symptom="Critical AI Flag", raw_message=text_to_process)
 
@@ -171,7 +169,6 @@ def heavy_audio_processing_pipeline(data: dict):
             tags = [{"log_id": log_id, "patient_id": str(elder.id), "tag_type": t.get("type", "NEW SYMPTOM"), "label": t.get("label", "General Symptom")} for t in symptoms]
             supabase.table("symptom_tags").insert(tags).execute()
         
-        # Save to primary SQLAlchemy HealthLog
         log = api.models.HealthLog(
             elder_id=elder.id, 
             mood=2 if is_emergency else 3, 
@@ -185,7 +182,6 @@ def heavy_audio_processing_pipeline(data: dict):
         db.add(log)
         db.commit()
 
-        # --- D. PATIENT REPLY ---
         reply = f"Namaste {elder.name}! Aapka message save ho gaya hai. Aapke caretaker ise jald hi sun lenge. 🙏"
         send_whatsapp(from_num, reply)
 

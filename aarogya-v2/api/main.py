@@ -26,7 +26,7 @@ from sqlalchemy.dialects import postgresql
 from api.database import engine, get_db
 import api.models
 from api.scheduler import start_scheduler
-from api.config import supabase, gemini_model
+from api.config import supabase, gemini_client, AAROGYA_MODEL
 
 # Routers
 from api.routers.auth import router as auth_router
@@ -115,7 +115,7 @@ class VoiceNote(BaseModel):
 
 @app.post("/api/process-log")
 async def process_voice_log(note: VoiceNote):
-    if not supabase or not gemini_model:
+    if not supabase or not gemini_client:
         raise HTTPException(status_code=500, detail="Supabase/Gemini offline.")
         
     try:
@@ -129,7 +129,10 @@ async def process_voice_log(note: VoiceNote):
         Task: Extract symptoms. Categorize as NEW SYMPTOM, REPEATED, or WORSENING. Analyze severity and set "is_emergency" to true if highly critical.
         Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean)."""
         
-        response = gemini_model.generate_content(prompt)
+        response = gemini_client.models.generate_content(
+    model=AAROGYA_MODEL,
+    contents=prompt
+)
         try:
             clean_text = response.text.replace('```json', '').replace('```', '').strip()
             if not clean_text.startswith('['): clean_text = f"[{clean_text}]"
