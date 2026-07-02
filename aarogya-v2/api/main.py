@@ -69,6 +69,14 @@ async def debug_exception_handler(request: Request, exc: Exception):
             "EXACT_LOCATION": traceback.format_exc().splitlines()[-3:]
         }
     )
+    
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Aarogya AI is running.",
+        "docs": "Visit /docs for the API Swagger documentation."
+    }
 
 # Register all Routers
 app.include_router(auth_router)
