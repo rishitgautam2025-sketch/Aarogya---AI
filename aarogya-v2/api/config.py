@@ -9,8 +9,20 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
 # Initialize Gemini
+# Initialize Gemini
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+
+# DIAGNOSTIC: List available models to find the correct path
+try:
+    print("[DEBUG] Fetching available models from Google API...")
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            print(f"[DEBUG] SUPPORTED MODEL NAME: {m.name}")
+except Exception as e:
+    print(f"[DEBUG] Could not list models: {e}")
+
+# Use the 'models/' prefix which is safer for SDK routing
+gemini_model = genai.GenerativeModel('models/gemini-1.5-flash')
 
 # Initialize AWS S3 (Mumbai Region)
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
