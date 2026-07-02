@@ -10,7 +10,7 @@ supabase = create_client(supabase_url, supabase_key) if supabase_url and supabas
 
 # Initialize Gemini
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # Initialize AWS S3 (Mumbai Region)
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
