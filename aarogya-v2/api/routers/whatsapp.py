@@ -16,7 +16,7 @@ from api.config import s3_client, AWS_BUCKET_NAME, supabase, gemini_model
 from api.database import SessionLocal, get_db
 import api.models
 from api.notifications import trigger_emergency_call
-from api.utils import send_emergency_alert
+from api.utils import send_emergency_alert, get_patient_context
 
 load_dotenv()
 
@@ -47,10 +47,18 @@ def heavy_audio_processing_pipeline(data: dict):
         media_url_0 = data.get("MediaUrl0") 
         media_content_type = data.get("MediaContentType0", "")
         
-        elder = db.query(api.models.Elder).filter(api.models.Elder.phone == from_num).first()
-        if not elder:
+        # 1. Fetch the patient from Supabase Cloud instead of local SQLite
+        elder_data = get_patient_context(from_num)
+        
+        if not elder_data:
             send_whatsapp(from_num, "Namaste! Aapka number register nahi hai.")
             return
+            
+        # 2. Convert the Supabase dictionary into an object so the rest of your code works perfectly
+        class PatientObject:
+            def __init__(self, d):
+                self.__dict__.update(d)
+        elder = PatientObject(elder_data)
 
         text_to_process = body.lower()
         s3_file_url = None
