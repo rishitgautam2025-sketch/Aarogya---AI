@@ -13,8 +13,16 @@ from sqlalchemy.orm import Session
 from api.database import get_db
 from api.models import User
 
+import os
+
 # Configuration
-SECRET_KEY = "aarogya-dev-secret-change-in-production"  # Change this in production
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY environment variable is not set. "
+        "Generate one (e.g. `python -c \"import secrets; print(secrets.token_hex(32))\"`) "
+        "and set it before starting the API."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 

@@ -123,7 +123,8 @@ def heavy_audio_processing_pipeline(data: dict):
                 Transcript/Context: "{text_to_process}"
                 
                 Task: Extract reported symptoms. Evaluate urgency. Set "is_emergency" to true ONLY IF an extracted symptom directly matches or worsens a risk related to the Universal Red Flags OR the Custom Alert Triggers.
-                Return ONLY a raw JSON array of objects with keys: 'type', 'label', and 'is_emergency' (boolean). Do not use markdown."""
+                If "is_emergency" is true, also include a "reasoning" key with a short (<20 words) explanation of which red flag or custom trigger was matched and why.
+                Return ONLY a raw JSON array of objects with keys: 'type', 'label', 'is_emergency' (boolean), and 'reasoning' (string, only required when is_emergency is true). Do not use markdown."""
                 
                 # --- NEW MODERN SDK CALL ---
                 if vision_part:
@@ -163,7 +164,16 @@ def heavy_audio_processing_pipeline(data: dict):
                                     break
                         
                         if elder.caregiver_phone:
-                            trigger_emergency_call(elder.caregiver_phone, elder.name, item.get('label', 'Emergency'), item.get('reasoning', 'Condition met.'))
+                            label = item.get('label', 'Emergency')
+                            reasoning = item.get('reasoning', 'Condition met.')
+                            call_sid = trigger_emergency_call(elder.caregiver_phone, elder.name, label, reasoning)
+                            if not call_sid:
+                                # Call failed to dispatch (missing creds, Twilio error, etc.) — fall back to WhatsApp so the alert isn't silently lost
+                                fallback_msg = (
+                                    f"⚠️ URGENT (call failed to connect): {elder.name} reported a critical symptom "
+                                    f"— {label}. {reasoning} Please check on them immediately."
+                                )
+                                send_whatsapp(elder.caregiver_phone, fallback_msg)
                             supabase.table("elders").update({"last_alert_sent": current_time.isoformat()}).eq("id", elder.id).execute()
                         break
                         

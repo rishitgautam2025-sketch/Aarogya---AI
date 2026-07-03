@@ -50,9 +50,14 @@ app = FastAPI(
 os.makedirs("media", exist_ok=True)
 app.mount("/media", StaticFiles(directory="media"), name="media")
 
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "*"], 
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"], 
     allow_headers=["*"],
@@ -62,14 +67,22 @@ app.add_middleware(
 def startup_event():
     start_scheduler()
 
+DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
+
 @app.exception_handler(Exception)
 async def debug_exception_handler(request: Request, exc: Exception):
+    print(traceback.format_exc())  # always logged server-side
+    if DEBUG_MODE:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "CRASH_MESSAGE": str(exc),
+                "EXACT_LOCATION": traceback.format_exc().splitlines()[-3:]
+            }
+        )
     return JSONResponse(
         status_code=500,
-        content={
-            "CRASH_MESSAGE": str(exc),
-            "EXACT_LOCATION": traceback.format_exc().splitlines()[-3:]
-        }
+        content={"detail": "Internal server error."}
     )
     
 @app.get("/")
@@ -191,7 +204,7 @@ def get_dashboard_data(elder_id: int, db: Session = Depends(get_db)):
     return {
         "elder": {
             "name": elder.name,
-            "relation": "Mother",
+            "relation": elder.relation or "Family",
             "age": elder.age,
             "status": "stable" if not logs or logs[0].mood >= 3 else "attention",
             "lastCheckin": formatted_notes[0]["time"] if formatted_notes else "Unknown",

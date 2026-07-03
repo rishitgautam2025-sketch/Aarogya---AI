@@ -36,7 +36,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
-GEOAPIFY_KEY = os.getenv("GEOAPIFY_KEY", "c7c39837c677431cb5568b46a9e4f6a7")
+GEOAPIFY_KEY = os.getenv("GEOAPIFY_KEY")
 
 router = APIRouter(prefix="/elder-monitor", tags=["Elder Monitor"])
 
@@ -52,6 +52,7 @@ class ElderCreate(BaseModel):
     known_conditions: Optional[List[str]] = []
     medications: Optional[List[str]] = []
     emergency_contact: Optional[str] = None
+    relation: Optional[str] = "Family"
 
 class HealthLogCreate(BaseModel):
     elder_id: int
@@ -268,6 +269,8 @@ async def nearby_clinics(
     elder = get_elder_or_404(elder_id, current_user, db)
     if not elder.latitude or not elder.longitude:
         raise HTTPException(status_code=400, detail="Elder location not set")
+    if not GEOAPIFY_KEY:
+        raise HTTPException(status_code=503, detail="Nearby clinics lookup is not configured (missing GEOAPIFY_KEY).")
 
     url = (
         f"https://api.geoapify.com/v2/places"

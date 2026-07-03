@@ -42,6 +42,7 @@ class Elder(Base):
     
     # This is the ONLY new line you need right now!
     preferred_language = Column(String, default="hindi") 
+    relation = Column(String(50), default="Family")
 
     caregiver = relationship("User", back_populates="elders")
     health_logs = relationship("HealthLog", back_populates="elder")
