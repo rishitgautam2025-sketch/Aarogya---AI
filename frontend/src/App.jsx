@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import OnboardingForm from './components/OnboardingForm'
-import useNavigate from react-router-dom
 import PatientProfile from './components/PatientProfile' // <-- ADD THIS LINE
 
 export default function App() {
