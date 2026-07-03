@@ -1,13 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import OnboardingForm from './components/OnboardingForm'
-import PatientProfile from './components/PatientProfile' // <-- ADD THIS LINE
+import PatientProfile from './components/PatientProfile'
 
 export default function App() {
-  // Navigation State
-  const [activeTab, setActiveTab] = useState('dashboard') // 'dashboard' or 'setup'
-
-  // Dashboard State
+  const [activeTab, setActiveTab] = useState('dashboard') 
   const [patientLogs, setPatientLogs] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -18,13 +15,11 @@ export default function App() {
   async function fetchDashboardData() {
     try {
       setLoading(true)
-      // 1. Fetch the raw voice notes
       const { data: logsData, error: logsError } = await supabase
         .from('voice_logs')
         .select('*')
         .order('created_at', { ascending: false })
 
-      // 2. Fetch the extracted AI tags
       const { data: tagsData, error: tagsError } = await supabase
         .from('symptom_tags')
         .select('*')
@@ -32,7 +27,6 @@ export default function App() {
       if (logsError) throw logsError
       if (tagsError) throw tagsError
 
-      // 3. Match the tags to their respective WhatsApp logs
       const combinedLogs = logsData.map(log => ({
         ...log,
         symptoms: tagsData.filter(tag => tag.log_id === log.id)
@@ -46,139 +40,118 @@ export default function App() {
     }
   }
 
+  // Helper for Nav Buttons
+  const getNavStyle = (tabName) => ({
+    padding: '0.6rem 1.5rem',
+    borderRadius: '99px',
+    border: 'none',
+    fontWeight: '600',
+    cursor: 'pointer',
+    fontSize: '0.95rem',
+    backgroundColor: activeTab === tabName ? '#2B2624' : 'transparent',
+    color: activeTab === tabName ? '#FFFFFF' : '#7A726D',
+    transition: 'all 0.2s ease-in-out'
+  })
+
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb', paddingBottom: '2rem' }}>
-      {/* --- TOP NAVIGATION BAR --- */}
-      <div style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '1rem 2rem', marginBottom: '2rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-        <button 
-          onClick={() => setActiveTab('dashboard')}
-          style={{ 
-            padding: '0.5rem 1.5rem', 
-            borderRadius: '8px', 
-            border: 'none',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            backgroundColor: activeTab === 'dashboard' ? '#2563eb' : '#f3f4f6',
-            color: activeTab === 'dashboard' ? '#ffffff' : '#4b5563',
-            transition: 'all 0.2s'
-          }}
-        >
-          Live Dashboard
-        </button>
-        <button 
-          onClick={() => setActiveTab('setup')}
-          style={{ 
-            padding: '0.5rem 1.5rem', 
-            borderRadius: '8px', 
-            border: 'none',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            backgroundColor: activeTab === 'setup' ? '#2563eb' : '#f3f4f6',
-            color: activeTab === 'setup' ? '#ffffff' : '#4b5563',
-            transition: 'all 0.2s'
-          }}
-        >
-          Patient Setup
-        </button>
-        <button 
-          onClick={() => setActiveTab('profile')}
-          style={{ 
-            padding: '0.5rem 1.5rem', 
-            borderRadius: '8px', 
-            border: 'none',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            backgroundColor: activeTab === 'profile' ? '#2563eb' : '#f3f4f6',
-            color: activeTab === 'profile' ? '#ffffff' : '#4b5563',
-            transition: 'all 0.2s'
-          }}
-        >
-          Patient Profile
-        </button>
+    <div style={{ minHeight: '100vh', backgroundColor: '#FBF9F6', fontFamily: 'sans-serif' }}>
+      
+      {/* --- PREMIUM NAVIGATION BAR --- */}
+      <div style={{ backgroundColor: '#FFFFFF', borderBottom: '1px solid #EBE6E1', padding: '1rem 2rem', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
+        <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', backgroundColor: '#F4F1ED', padding: '0.35rem', borderRadius: '99px', width: 'fit-content' }}>
+          <button onClick={() => setActiveTab('dashboard')} style={getNavStyle('dashboard')}>Live Dashboard</button>
+          <button onClick={() => setActiveTab('setup')} style={getNavStyle('setup')}>Patient Setup</button>
+          <button onClick={() => setActiveTab('profile')} style={getNavStyle('profile')}>Patient Profile</button>
+        </div>
       </div>
 
       {/* --- MAIN CONTENT AREA --- */}
-      
-      {/* VIEW 1: THE DASHBOARD */}
-      {activeTab === 'dashboard' && (
-        <div style={{ padding: '0 2rem', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-            <div>
-              <h1 style={{ color: '#111827', marginBottom: '0.5rem' }}>Aarogya AI Dashboard</h1>
-              <p style={{ color: '#6b7280', margin: '0' }}>Live patient updates from WhatsApp</p>
+      <div style={{ padding: '2rem' }}>
+        
+        {/* VIEW 1: THE DASHBOARD */}
+        {activeTab === 'dashboard' && (
+          <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFFFFF', padding: '1.5rem', borderRadius: '16px', border: '1px solid #EBE6E1' }}>
+              <div>
+                <h1 style={{ color: '#2B2624', margin: '0 0 0.25rem 0', fontSize: '1.875rem' }}>Global Triage Feed</h1>
+                <p style={{ color: '#7A726D', margin: '0', fontSize: '1.125rem' }}>Monitoring all incoming WhatsApp alerts</p>
+              </div>
+              <button 
+                onClick={fetchDashboardData}
+                style={{ padding: '0.6rem 1.25rem', backgroundColor: '#F4F1ED', color: '#2B2624', border: '1px solid #EBE6E1', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <span style={{ fontSize: '1.2rem' }}>↻</span> Refresh Feed
+              </button>
             </div>
-            <button 
-              onClick={fetchDashboardData}
-              style={{ padding: '0.5rem 1rem', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-            >
-              ↻ Refresh
-            </button>
-          </div>
-          
-          {loading ? (
-             <div style={{ textAlign: 'center', color: '#6b7280', marginTop: '2rem' }}>Loading patient logs...</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              {patientLogs.map(log => (
-                <div key={log.id} style={{ padding: '1.5rem', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+            
+            {loading ? (
+              <div style={{ textAlign: 'center', color: '#7A726D', padding: '3rem', backgroundColor: '#FFFFFF', borderRadius: '16px', border: '1px solid #EBE6E1' }}>Syncing with Supabase...</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {patientLogs.map(log => {
+                  const isCritical = log.symptoms.some(tag => tag.tag_type === 'NEW_SYMPTOM')
                   
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', color: '#6b7280', fontSize: '0.875rem' }}>
-                    <span>Patient ID: {log.patient_id.substring(0, 8)}...</span>
-                    <span>{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  </div>
-                  
-                  {/* Transcript */}
-                  <p style={{ fontSize: '1.125rem', color: '#1f2937', marginBottom: '1rem', lineHeight: '1.5' }}>
-                    "{log.raw_text}"
-                  </p>
+                  return (
+                    <div key={log.id} style={{ padding: '1.5rem', border: isCritical ? '1px solid #F8D7DA' : '1px solid #EBE6E1', borderLeft: isCritical ? '4px solid #B91C1C' : '1px solid #EBE6E1', borderRadius: '16px', backgroundColor: '#FFFFFF', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', color: '#7A726D', fontSize: '0.875rem', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span>Patient ID: {log.patient_id.substring(0, 8)}</span>
+                        <span>{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      
+                      <p style={{ fontSize: '1.125rem', color: '#2B2624', marginBottom: '1rem', lineHeight: '1.6' }}>
+                        "{log.raw_text}"
+                      </p>
 
-                  {/* Audio Playback */}
-                  {log.audio_url && (
-                    <div style={{ marginBottom: '1.5rem', backgroundColor: '#f3f4f6', padding: '0.5rem', borderRadius: '8px' }}>
-                      <audio controls src={log.audio_url} style={{ width: '100%' }} />
+                      {log.audio_url && (
+                        <div style={{ marginBottom: '1.5rem', backgroundColor: '#F4F1ED', padding: '0.75rem', borderRadius: '8px' }}>
+                          <audio controls src={log.audio_url} style={{ width: '100%', height: '36px' }} />
+                        </div>
+                      )}
+                      
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        {log.symptoms.map(tag => (
+                          <span 
+                            key={tag.id} 
+                            style={{ 
+                              padding: '0.35rem 0.75rem', 
+                              borderRadius: '6px', 
+                              fontSize: '0.875rem',
+                              backgroundColor: tag.tag_type === 'NEW_SYMPTOM' ? '#FEF2F2' : '#F4F1ED',
+                              color: tag.tag_type === 'NEW_SYMPTOM' ? '#B91C1C' : '#2B2624',
+                              fontWeight: '600'
+                            }}
+                          >
+                            {tag.label}
+                          </span>
+                        ))}
+                        {log.symptoms.length === 0 && (
+                          <span style={{ color: '#7A726D', fontStyle: 'italic', fontSize: '0.875rem' }}>No critical symptoms extracted</span>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  
-                  {/* Symptom Tags */}
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    {log.symptoms.map(tag => (
-                      <span 
-                        key={tag.id} 
-                        style={{ 
-                          padding: '0.35rem 0.75rem', 
-                          borderRadius: '9999px', 
-                          fontSize: '0.875rem',
-                          backgroundColor: tag.tag_type === 'NEW_SYMPTOM' ? '#fee2e2' : '#e0e7ff',
-                          color: tag.tag_type === 'NEW_SYMPTOM' ? '#991b1b' : '#3730a3',
-                          fontWeight: '600'
-                        }}
-                      >
-                        {tag.label}
-                      </span>
-                    ))}
-                    
-                    {log.symptoms.length === 0 && (
-                      <span style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '0.875rem' }}>No critical symptoms extracted</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
-      {/* VIEW 2: THE ONBOARDING / SETUP FORM */}
-      {activeTab === 'setup' && (
-        <OnboardingForm 
-          elderId="12345" 
-          onSaveSuccess={() => setActiveTab('dashboard')} 
-        />
-      )}
-      {/* VIEW 3: THE PATIENT PROFILE */}
-      {activeTab === 'profile' && (
-        <PatientProfile logs={patientLogs} />
-      )}
+        {/* VIEW 2: THE ONBOARDING / SETUP FORM */}
+        {activeTab === 'setup' && (
+          <OnboardingForm 
+            elderId="12345" 
+            onSaveSuccess={() => setActiveTab('dashboard')} 
+          />
+        )}
+
+        {/* VIEW 3: THE PATIENT PROFILE */}
+        {activeTab === 'profile' && (
+          <PatientProfile logs={patientLogs} />
+        )}
+
+      </div>
     </div>
   )
 }

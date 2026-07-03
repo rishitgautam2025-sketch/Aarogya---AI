@@ -1,209 +1,112 @@
-import React, { useState } from 'react';
+import React from 'react';
 
-export default function OnboardingForm({ onSaveSuccess }) {
-  const [formData, setFormData] = useState({
-    name: '',
-    age: '',
-    city: '', // <--- City added to state
-    phone: '',
-    caregiver_phone: '',
-    chronic_conditions: [],
-    custom_triggers: []
-  });
+const OnboardingForm = ({ onSaveSuccess }) => {
   
-  const [newTrigger, setNewTrigger] = useState('');
-
-  const availableConditions = [
-    "Type 2 Diabetes", 
-    "Hypertension", 
-    "Asthma", 
-    "COPD", 
-    "Chronic Kidney Disease",
-    "Heart Conditions"
-  ];
-
-  const handleConditionChange = (condition) => {
-    setFormData(prev => {
-      const exists = prev.chronic_conditions.includes(condition);
-      const updated = exists 
-        ? prev.chronic_conditions.filter(c => c !== condition)
-        : [...prev.chronic_conditions, condition];
-      return { ...prev, chronic_conditions: updated };
-    });
+  const inputStyle = {
+    width: '100%',
+    padding: '0.75rem 1rem',
+    borderRadius: '8px',
+    border: '1px solid #EBE6E1',
+    backgroundColor: '#FBF9F6',
+    color: '#2B2624',
+    fontSize: '1rem',
+    boxSizing: 'border-box',
+    marginTop: '0.25rem'
   };
 
-  const addCustomTrigger = () => {
-    if (newTrigger.trim() && !formData.custom_triggers.includes(newTrigger.trim().toLowerCase())) {
-      setFormData(prev => ({
-        ...prev,
-        custom_triggers: [...prev.custom_triggers, newTrigger.trim().toLowerCase()]
-      }));
-      setNewTrigger('');
-    }
-  };
-
-  const removeCustomTrigger = (indexToRemove) => {
-    setFormData(prev => ({
-      ...prev,
-      custom_triggers: prev.custom_triggers.filter((_, i) => i !== indexToRemove)
-    }));
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await fetch(`http://localhost:8000/api/onboarding`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          age: parseInt(formData.age, 10) 
-        })
-      });
-      
-      if (response.ok) {
-        alert('Patient profile saved successfully!');
-        if (onSaveSuccess) onSaveSuccess();
-      } else {
-        const errorData = await response.json();
-        alert(`Failed to save: ${errorData.detail || 'Unknown Error'}`);
-      }
-    } catch (error) {
-      console.error('Error submitting form:', error);
-      alert('Network error. Check if backend is running.');
-    }
+  const labelStyle = {
+    fontSize: '0.875rem',
+    fontWeight: 'bold',
+    color: '#7A726D',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em'
   };
 
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-md mt-10">
-      <h2 className="text-2xl font-bold mb-6 text-gray-800">Aarogya AI: Patient Setup</h2>
+    <div style={{ maxWidth: '700px', margin: '0 auto' }}>
       
-      <form onSubmit={handleSubmit} className="space-y-6">
-        
-        {/* Name, Age, and City Row (Updated to a 4-col grid) */}
-        <div className="grid grid-cols-4 gap-4">
-          <div className="col-span-2">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Patient Full Name</label>
-            <input 
-              type="text" 
-              required
-              placeholder="e.g., Ramesh Kumar"
-              className="w-full p-2 border rounded border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.name}
-              onChange={(e) => setFormData({...formData, name: e.target.value})}
-            />
-          </div>
-          <div className="col-span-1">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Age</label>
-            <input 
-              type="number" 
-              required
-              placeholder="e.g., 65"
-              className="w-full p-2 border rounded border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.age}
-              onChange={(e) => setFormData({...formData, age: e.target.value})}
-            />
-          </div>
-          <div className="col-span-1">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">City</label>
-            <input 
-              type="text" 
-              required
-              placeholder="e.g., Pune"
-              className="w-full p-2 border rounded border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.city}
-              onChange={(e) => setFormData({...formData, city: e.target.value})}
-            />
-          </div>
-        </div>
+      <div style={{ backgroundColor: '#FFFFFF', padding: '2rem', borderRadius: '16px', border: '1px solid #EBE6E1', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+        <h2 style={{ fontSize: '1.875rem', color: '#2B2624', margin: '0 0 0.5rem 0' }}>Patient Registration</h2>
+        <p style={{ color: '#7A726D', margin: '0 0 2rem 0', fontSize: '1.125rem' }}>Initialize a new patient for AI monitoring</p>
 
-        {/* Phone Numbers Row */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Patient WhatsApp Number</label>
-            <input 
-              type="tel" 
-              placeholder="+91XXXXXXXXXX"
-              required
-              className="w-full p-2 border rounded border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.phone}
-              onChange={(e) => setFormData({...formData, phone: e.target.value})}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Caregiver Phone (Twilio Alert)</label>
-            <input 
-              type="tel" 
-              placeholder="+91XXXXXXXXXX"
-              required
-              className="w-full p-2 border rounded border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={formData.caregiver_phone}
-              onChange={(e) => setFormData({...formData, caregiver_phone: e.target.value})}
-            />
-          </div>
-        </div>
-
-        {/* Chronic Conditions */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Pre-existing Chronic Conditions</label>
-          <div className="grid grid-cols-2 gap-3">
-            {availableConditions.map((condition) => (
-              <label key={condition} className="flex items-center space-x-2 p-2 border rounded cursor-pointer hover:bg-gray-50">
-                <input 
-                  type="checkbox" 
-                  checked={formData.chronic_conditions.includes(condition)}
-                  onChange={() => handleConditionChange(condition)}
-                  className="rounded text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">{condition}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* Custom Triggers */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Custom Emergency Keywords/Triggers</label>
-          <div className="flex gap-2 mb-3">
-            <input 
-              type="text" 
-              placeholder="e.g., blurry vision, chest pressure"
-              className="flex-grow p-2 border rounded border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={newTrigger}
-              onChange={(e) => setNewTrigger(e.target.value)}
-            />
-            <button 
-              type="button" 
-              onClick={addCustomTrigger}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition"
-            >
-              Add
-            </button>
-          </div>
+        <form style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
-          <div className="flex flex-wrap gap-2">
-            {formData.custom_triggers.map((trigger, index) => (
-              <span key={index} className="flex items-center gap-1 bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-sm font-medium border">
-                {trigger}
-                <button 
-                  type="button" 
-                  onClick={() => removeCustomTrigger(index)}
-                  className="text-gray-400 hover:text-red-500 ml-1 font-bold focus:outline-none"
-                >
-                  &times;
-                </button>
-              </span>
-            ))}
+          {/* Top Row: Name & Age */}
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+            <div>
+              <label style={labelStyle}>Patient Full Name</label>
+              <input type="text" placeholder="e.g., Ramesh Kumar" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Age</label>
+              <input type="number" placeholder="e.g., 65" style={inputStyle} />
+            </div>
           </div>
-        </div>
 
-        <button 
-          type="submit" 
-          className="w-full py-3 bg-green-600 text-white rounded font-semibold hover:bg-green-700 transition shadow-sm"
-        >
-          Initialize Patient Triage System
-        </button>
-      </form>
+          {/* Location & Contacts */}
+          <div>
+            <label style={labelStyle}>City</label>
+            <input type="text" placeholder="e.g., Pune" style={inputStyle} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div>
+              <label style={labelStyle}>Patient WhatsApp</label>
+              <input type="text" placeholder="+91XXXXXXXXXX" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Caregiver Phone (Twilio Alert)</label>
+              <input type="text" placeholder="+91XXXXXXXXXX" style={inputStyle} />
+            </div>
+          </div>
+
+          {/* Chronic Conditions */}
+          <div style={{ padding: '1.5rem', backgroundColor: '#F4F1ED', borderRadius: '8px', border: '1px solid #EBE6E1' }}>
+            <label style={{...labelStyle, color: '#2B2624'}}>Pre-existing Chronic Conditions</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '1rem' }}>
+              {['Type 2 Diabetes', 'Hypertension', 'Asthma', 'COPD', 'Kidney Disease', 'Heart Conditions'].map(condition => (
+                <label key={condition} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#4B4543', fontSize: '0.95rem', cursor: 'pointer' }}>
+                  <input type="checkbox" style={{ width: '16px', height: '16px', accentColor: '#2B2624' }} />
+                  {condition}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Triggers */}
+          <div>
+            <label style={labelStyle}>Custom Emergency Triggers</label>
+            <p style={{ fontSize: '0.85rem', color: '#7A726D', margin: '0.25rem 0 0.75rem 0' }}>The AI will immediately call the caregiver if these specific keywords are mentioned.</p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input type="text" placeholder="e.g., blurry vision, severe chest pressure" style={inputStyle} />
+              <button type="button" style={{ marginTop: '0.25rem', padding: '0 1.5rem', backgroundColor: '#2B2624', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Add</button>
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <button 
+            type="button" 
+            onClick={onSaveSuccess}
+            style={{ 
+              marginTop: '1rem',
+              padding: '1rem', 
+              backgroundColor: '#10B981', 
+              color: '#FFFFFF', 
+              border: 'none', 
+              borderRadius: '8px', 
+              fontSize: '1.125rem', 
+              fontWeight: 'bold', 
+              cursor: 'pointer',
+              boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)'
+            }}
+          >
+            Initialize Patient Triage System
+          </button>
+        </form>
+
+      </div>
     </div>
   );
-}
+};
+
+export default OnboardingForm;
