@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import OnboardingForm from './components/OnboardingForm'
 import useNavigate from react-router-dom
+import PatientProfile from './components/PatientProfile' // <-- ADD THIS LINE
 
 export default function App() {
   // Navigation State
@@ -79,6 +80,21 @@ export default function App() {
           }}
         >
           Patient Setup
+        </button>
+        <button 
+          onClick={() => setActiveTab('profile')}
+          style={{ 
+            padding: '0.5rem 1.5rem', 
+            borderRadius: '8px', 
+            border: 'none',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            backgroundColor: activeTab === 'profile' ? '#2563eb' : '#f3f4f6',
+            color: activeTab === 'profile' ? '#ffffff' : '#4b5563',
+            transition: 'all 0.2s'
+          }}
+        >
+          Patient Profile
         </button>
       </div>
 
@@ -159,6 +175,10 @@ export default function App() {
           elderId="12345" 
           onSaveSuccess={() => setActiveTab('dashboard')} 
         />
+      )}
+      {/* VIEW 3: THE PATIENT PROFILE */}
+      {activeTab === 'profile' && (
+        <PatientProfile />
       )}
     </div>
   )
