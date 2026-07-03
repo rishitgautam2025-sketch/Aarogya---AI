@@ -177,7 +177,7 @@ export default function App() {
       )}
       {/* VIEW 3: THE PATIENT PROFILE */}
       {activeTab === 'profile' && (
-        <PatientProfile />
+        <PatientProfile logs={patientLogs} />
       )}
     </div>
   )
