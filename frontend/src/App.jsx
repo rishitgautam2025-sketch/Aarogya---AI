@@ -64,7 +64,12 @@ export default function App() {
           <img 
             src="/vytera-logo.png" 
             alt="Vytera Logo" 
-            style={{ height: '45px', width: 'auto', objectFit: 'contain' }} 
+            style={{ 
+              height: '55px', 
+              width: 'auto', 
+              objectFit: 'contain', 
+              filter: 'brightness(0)' 
+            }} 
           />
         </div>
 
