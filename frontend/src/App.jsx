@@ -60,12 +60,12 @@ export default function App() {
       <div style={{ backgroundColor: '#FFFFFF', borderBottom: '1px solid #EBE6E1', padding: '1rem 2rem', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 2px 10px rgba(0,0,0,0.02)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         
         {/* 1. THE VYTERA LOGO (Left Aligned) */}
-        <div style={{ width: '200px' }}>
+        <div style={{ width: '250px' }}>
           <img 
             src="/vytera-logo.png" 
             alt="Vytera Logo" 
             style={{ 
-              height: '55px', 
+              height: '80px', 
               width: 'auto', 
               objectFit: 'contain', 
               filter: 'brightness(0)' 
@@ -81,7 +81,7 @@ export default function App() {
         </div>
 
         {/* 3. INVISIBLE SPACER (Keeps the buttons perfectly centered) */}
-        <div style={{ width: '200px' }}></div>
+        <div style={{ width: '250px' }}></div>
         
       </div>
 
