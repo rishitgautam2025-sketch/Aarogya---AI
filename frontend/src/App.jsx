@@ -57,12 +57,27 @@ export default function App() {
     <div style={{ minHeight: '100vh', backgroundColor: '#FBF9F6', fontFamily: 'sans-serif' }}>
       
       {/* --- PREMIUM NAVIGATION BAR --- */}
-      <div style={{ backgroundColor: '#FFFFFF', borderBottom: '1px solid #EBE6E1', padding: '1rem 2rem', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
-        <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', backgroundColor: '#F4F1ED', padding: '0.35rem', borderRadius: '99px', width: 'fit-content' }}>
+      <div style={{ backgroundColor: '#FFFFFF', borderBottom: '1px solid #EBE6E1', padding: '1rem 2rem', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 2px 10px rgba(0,0,0,0.02)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        
+        {/* 1. THE VYTERA LOGO (Left Aligned) */}
+        <div style={{ width: '200px' }}>
+          <img 
+            src="/vytera-logo.png" 
+            alt="Vytera Logo" 
+            style={{ height: '45px', width: 'auto', objectFit: 'contain' }} 
+          />
+        </div>
+
+        {/* 2. THE NAV BUTTONS (Center Aligned) */}
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', backgroundColor: '#F4F1ED', padding: '0.35rem', borderRadius: '99px' }}>
           <button onClick={() => setActiveTab('dashboard')} style={getNavStyle('dashboard')}>Live Dashboard</button>
           <button onClick={() => setActiveTab('setup')} style={getNavStyle('setup')}>Patient Setup</button>
           <button onClick={() => setActiveTab('profile')} style={getNavStyle('profile')}>Patient Profile</button>
         </div>
+
+        {/* 3. INVISIBLE SPACER (Keeps the buttons perfectly centered) */}
+        <div style={{ width: '200px' }}></div>
+        
       </div>
 
       {/* --- MAIN CONTENT AREA --- */}
